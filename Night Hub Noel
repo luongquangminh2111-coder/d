@@ -1,0 +1,6 @@
+Config = {
+ namescript ="Minh hub"
+ logoscript = "138151705692565",
+ tacgia ="Night Hub Noel"
+}
+loadstring(game:HttpGet("https://raw.githubusercontent.com/WhiteX1208/Scripts/refs/heads/main/BF-Beta.lua"))()

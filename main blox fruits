@@ -1,0 +1,4404 @@
+--=========================================================--
+--      MInh HUB-BLOXFRUITS | BLOX FRUITS (MINH HUB MENU)       --
+--=========================================================--
+local Players              = game:GetService("Players")
+local TweenService         = game:GetService("TweenService")
+local RunService           = game:GetService("RunService")
+local UserInputService     = game:GetService("UserInputService")
+local ReplicatedStorage    = game:GetService("ReplicatedStorage")
+
+-- Dùng pcall để tránh crash nếu executor không hỗ trợ các dịch vụ ảo hóa
+local okVIM, VirtualInputManager = pcall(function() return game:GetService("VirtualInputManager") end)
+local okVU, VirtualUser          = pcall(function() return game:GetService("VirtualUser") end)
+
+local LocalPlayer = Players.LocalPlayer
+if not LocalPlayer then
+    Players:GetPropertyChangedSignal("LocalPlayer"):Wait()
+    LocalPlayer = Players.LocalPlayer
+end
+
+-- HÀM LẤY LEVEL AN TOÀN
+local function getLevel()
+    local data = LocalPlayer:FindFirstChild("Data")
+    if data and data:FindFirstChild("Level") then
+        return data.Level.Value
+    end
+    return 1
+end
+
+-- KIỂM TRA & XÁC ĐỊNH SEA (WORLD 1, 2, 3) + AUTO FALLBACK
+local placeId = game.PlaceId
+local World1  = (placeId == 2753915549)
+local World2  = (placeId == 4442272183)
+local World3  = (placeId == 7449423635)
+
+if not (World1 or World2 or World3) then
+    local lvl = getLevel()
+    if lvl < 700 then
+        World1 = true
+    elseif lvl < 1500 then
+        World2 = true
+    else
+        World3 = true
+    end
+end
+
+-- XỬ LÝ RESET TRẠNG THÁI KHI NHÂN VẬT CHẾT / HỒI SINH
+local currentFlyTween = nil
+local targetEnemy     = nil
+local currentRaidTween = nil
+
+LocalPlayer.CharacterAdded:Connect(function(newChar)
+    currentFlyTween  = nil
+    currentRaidTween = nil
+    targetEnemy      = nil
+end)
+
+-- CẤU HÌNH & TRẠNG THÁI
+local autoAfkEnabled          = true
+local autoFarmEnabled         = false
+local autoQuestEnabled        = true  -- Tự động nhận Quest khi bật Auto Farm
+local autoFarmMaterialEnabled = false
+local bringMobsEnabled        = true
+local maxBringCount           = 6
+local fastAttackEnabled       = true
+local maxAttackTargets        = 2     -- số quái Fast Attack đánh cùng lúc
+local autoHakiEnabled         = true
+local walkOnWaterEnabled      = true
+local autoRaceV3Enabled       = true
+local autoRaceV4Enabled       = true
+
+-- CẤU HÌNH RANDOM BONES & CẤT TRÁI
+local autoRandomBonesEnabled  = false
+local autoStoreFruitEnabled   = false
+local autoRandomFruitEnabled  = false  -- Auto mua Random Fruit (Cousin)
+local autoChestEnabled        = false  -- Auto Farm Chest
+
+-- CẤU HÌNH BAY CAO
+local extraFarmHeight    = 55     
+
+-- DANH SÁCH & NGUYÊN LIỆU AUTO FARM MATERIAL
+local selectedMaterialTarget = ""
+local currentMatPointIndex   = 1
+local lastPointSwitchTime    = 0
+
+-- BẢNG NGUYÊN LIỆU THEO TỪNG SEA (Sea 1 / Sea 2 / Sea 3)
+-- mobs  = tên quái rớt nguyên liệu ở Sea đó (script tự tìm quái theo TÊN, không phụ thuộc toạ độ)
+-- spots = toạ độ dự phòng, chỉ dùng khi không tìm thấy điểm hồi sinh quái trong map
+local materialData = {
+    ["Scrap Metal & Leather"] = {
+        [1] = { mobs  = {"Pirate", "Brute", "Gladiator", "Forest Pirate"},
+                spots = { Vector3.new(-1076.60, 27.30, 3960.73), Vector3.new(-1051.09, 27.30, 4242.90) } },
+        [2] = { mobs  = {"Mercenary", "Marine Captain", "Swan Pirate"},
+                spots = { Vector3.new(-2448.00, 73.00, -3210.00) } },
+        [3] = { mobs  = {"Pirate Millionaire", "Pistol Billionaire"},
+                spots = { Vector3.new(-290.00, 43.00, 5583.00) } },
+    },
+    ["Angel Wing"] = {
+        [1] = { mobs  = {"God's Guard", "Shanda", "Royal Squad", "Royal Soldier", "Wysper"},
+                spots = { Vector3.new(-4198.00, 1173.98, -366.06) } },
+    },
+    ["Fish Tail"] = {
+        [1] = { mobs  = {"Fishman Warrior", "Fishman Commando"},
+                spots = { Vector3.new(61163.85, 11.00, 1819.78) } },
+        [3] = { mobs  = {"Fishman Raider", "Fishman Captain"},
+                spots = { Vector3.new(-10356.67, 278.79, -8350.42) } },
+    },
+    ["Magma Ore"] = {
+        [1] = { mobs  = {"Military Soldier", "Military Spy"},
+                spots = { Vector3.new(-5231.00, 8.00, 8467.00) } },
+        [2] = { mobs  = {"Lava Pirate", "Magma Ninja"},
+                spots = { Vector3.new(-5091.50, 29.20, -4972.79), Vector3.new(-5787.18, 29.20, -5543.03) } },
+    },
+    ["Vampire Fang"] = {
+        [2] = { mobs  = {"Vampire"},
+                spots = { Vector3.new(-6017.76, 6.43, -1320.76) } },
+    },
+    ["Radioactive Material"] = {
+        [2] = { mobs  = {"Factory Staff", "Swan Pirate"},
+                spots = { Vector3.new(295.00, 73.00, -56.00), Vector3.new(925.00, 125.00, 3280.00) } },
+    },
+    ["Mystic Droplet"] = {
+        [2] = { mobs  = {"Sea Soldier", "Water Fighter"},
+                spots = { Vector3.new(-3451.02, 238.88, -10537.89), Vector3.new(-3347.21, 27.00, -9835.69), Vector3.new(-2686.37, 27.00, -9786.82) } },
+    },
+    ["Dragon Scale"] = {
+        [3] = { mobs  = {"Dragon Crew Warrior", "Dragon Crew Archer"},
+                spots = { Vector3.new(5820.68, 1071.01, -71.86) } },
+    },
+    ["Conjured Cocoa"] = {
+        [3] = { mobs  = {"Cocoa Warrior", "Chocolate Bar Battler"},
+                spots = { Vector3.new(699.97, 0.50, -12611.47), Vector3.new(-12.14, 0.50, -12245.52) } },
+    },
+    ["Mini Tusk"] = {
+        [3] = { mobs  = {"Mythological Pirate"},
+                spots = { Vector3.new(-13571.01, 427.87, -6857.66) } },
+    },
+    ["Demonic Soul"] = {
+        [3] = { mobs  = {"Demonic Soul"},
+                spots = { Vector3.new(-9516.00, 142.00, 5535.00) } },
+    },
+}
+
+-- CẤU HÌNH AUTO RAID & LAW RAID
+_G.SelectChip   = "Flame"
+_G.AutoBuyChip  = false
+_G.StartRaid    = false
+_G.Dungeon      = false
+_G.AutoLawRaid  = false
+
+local autoRaidEnabled       = false
+local autoBuyChipEnabled    = false
+local autoStartRaidEnabled  = false
+local selectedRaidChip      = "Flame"
+
+local farmDistanceHeight    = 35  
+local mobHoldHeight         = 0   
+local flySpeed              = 190
+local bringRadius           = 250
+local selectedWeapon        = "Melee"
+local weaponTypes           = {"Melee", "Sword", "Blox Fruit"}
+local selectedFarmTarget    = "Auto Level"
+local selectedBossTarget    = ""
+
+local toggleUpdateFuncs     = {}
+
+-- HÀM BAY SMOOTH BẰNG TWEENSERVICE (đã sửa: có timeout, không treo vòng lặp)
+local function cancelFarmTween()
+    if currentFlyTween then pcall(function() currentFlyTween:Cancel() end); currentFlyTween = nil end
+end
+
+-- keepGoing (tuỳ chọn): hàm trả về false thì dừng bay NGAY (vd khi người dùng tắt chức năng)
+local function stopAllFlying()
+    cancelFarmTween()
+    if currentRaidTween then pcall(function() currentRaidTween:Cancel() end); currentRaidTween = nil end
+    pcall(function()
+        local hrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+        if hrp then
+            hrp.AssemblyLinearVelocity  = Vector3.new(0, 0, 0)
+            hrp.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+        end
+    end)
+end
+
+local function flyTo(targetCFrame, speed, keepGoing)
+    local character = LocalPlayer.Character
+    if not character or not character:FindFirstChild("HumanoidRootPart") then return end
+    local hrp      = character.HumanoidRootPart
+    local spd      = speed or flySpeed or 190
+    local distance = (hrp.Position - targetCFrame.Position).Magnitude
+
+    cancelFarmTween() -- tránh 2 tween tranh nhau điều khiển nhân vật
+    if currentRaidTween then pcall(function() currentRaidTween:Cancel() end); currentRaidTween = nil end
+
+    if distance > 10 then
+        local duration = distance / spd
+        local tw = TweenService:Create(hrp, TweenInfo.new(duration, Enum.EasingStyle.Linear), {CFrame = targetCFrame})
+        currentRaidTween = tw
+        tw:Play()
+        local t0 = tick()
+        -- chờ có giới hạn thời gian thay vì Completed:Wait() (dễ treo vĩnh viễn)
+        while tw.PlaybackState == Enum.PlaybackState.Playing and tick() - t0 < duration + 1.5 do
+            if keepGoing and not keepGoing() then break end
+            task.wait()
+        end
+        if currentRaidTween == tw then currentRaidTween = nil end
+        if tw.PlaybackState == Enum.PlaybackState.Playing then tw:Cancel() end
+    else
+        hrp.CFrame = targetCFrame
+    end
+end
+
+-- HÀM TOPOS
+local function topos(targetCFrame)
+    if LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
+        LocalPlayer.Character.HumanoidRootPart.CFrame = targetCFrame
+    end
+end
+
+-- ANTI-AFK
+LocalPlayer.Idled:Connect(function()
+    if autoAfkEnabled and okVU and VirtualUser then
+        VirtualUser:Button2Down(Vector2.new(0, 0), workspace.CurrentCamera.CFrame)
+        task.wait(1)
+        VirtualUser:Button2Up(Vector2.new(0, 0), workspace.CurrentCamera.CFrame)
+    end
+end)
+
+local HAUNTED_CASTLE_POS    = Vector3.new(-9516, 142, 5535)
+local CAKE_ISLAND_POS       = Vector3.new(-2086, 70, -12245)
+local CAKE_PRINCE_GATE_POS  = Vector3.new(-2145.58, 70.01, -12404.92)
+
+local seaBosses = {
+    ["Sea 3"] = {
+        "Stone", "Hydra Leader", "Kilo Admiral", "Captain Elephant", 
+        "Beautiful Pirate", "Longma", "Cake Queen", "Cake Prince", 
+        "Dough King", "rip_indra", "Soul Reaper"
+    }
+}
+
+local bossSpawnLocations = {
+    ["Stone"]             = Vector3.new(-1195.76, 105.13, 6916.22),
+    ["Hydra Leader"]      = Vector3.new(5820.68, 1071.01, -71.86),
+    ["Kilo Admiral"]      = Vector3.new(3060.55, 523.81, -7260.22),
+    ["Captain Elephant"]  = Vector3.new(-13567.31, 361.72, -8435.70),
+    ["Beautiful Pirate"]  = Vector3.new(5366.19, 22.30, -192.95),
+    ["Longma"]            = Vector3.new(-10168.76, 374.80, -9528.21),
+    ["Cake Queen"]        = Vector3.new(-710.61, 381.60, -11035.15),
+    ["Cake Prince"]       = Vector3.new(-2136.46, 70.01, -12399.96),
+    ["Dough King"]        = Vector3.new(-2136.46, 70.01, -12399.96),
+    ["rip_indra"]         = Vector3.new(-5312.19, 424.01, -2625.07),
+    ["Soul Reaper"]       = Vector3.new(-9520.92, 315.93, 6709.41)
+}
+
+local raidChipsList = {
+    "Flame", "Ice", "Quake", "Light", "Dark", 
+    "Spider", "Rumble", "Magma", "Buddha", "Sand", "Dough", "Phoenix"
+}
+
+-- =========================================================--
+--              HỆ THỐNG DỮ LIỆU AUTO QUEST                 --
+-- =========================================================--
+-- Dữ liệu quest đã được sửa lại đúng tên quest / tên quái / mốc level của game.
+-- Mỗi dòng: {level tối thiểu, tên quest, số thứ tự quest, tên quái, vị trí NPC, vị trí quái}
+-- (vị trí quái chỉ là dự phòng, script ưu tiên tìm điểm hồi sinh thật trong EnemySpawns)
+local GetQuestData, GetQuestMobSpawn
+do
+    local V = Vector3.new
+    local QUESTS = {
+        [1] = {
+            {1,   "BanditQuest1",   1, "Bandit",              V(1059.37, 15.45, 1550.42),     V(1045.96, 27.00, 1560.82)},
+            {10,  "JungleQuest",    1, "Monkey",              V(-1598.09, 35.55, 153.38),     V(-1448.52, 67.85, 11.47)},
+            {15,  "JungleQuest",    2, "Gorilla",             V(-1598.09, 35.55, 153.38),     V(-1129.88, 40.46, -525.42)},
+            {30,  "BuggyQuest1",    1, "Pirate",              V(-1141.07, 4.10, 3831.55),     V(-1103.51, 13.75, 3896.09)},
+            {40,  "BuggyQuest1",    2, "Brute",               V(-1141.07, 4.10, 3831.55),     V(-1140.08, 14.81, 4322.92)},
+            {60,  "DesertQuest",    1, "Desert Bandit",       V(894.49, 5.14, 4392.43),       V(924.80, 6.45, 4481.59)},
+            {75,  "DesertQuest",    2, "Desert Officer",      V(894.49, 5.14, 4392.43),       V(1608.28, 8.61, 4371.01)},
+            {90,  "SnowQuest",      1, "Snow Bandit",         V(1389.74, 88.15, -1298.91),    V(1354.35, 87.27, -1393.95)},
+            {100, "SnowQuest",      2, "Snowman",             V(1389.74, 88.15, -1298.91),    V(1201.64, 144.58, -1550.07)},
+            {120, "MarineQuest2",   1, "Chief Petty Officer", V(-5039.59, 27.35, 4324.68),    V(-4881.23, 22.65, 4273.75)},
+            {150, "SkyQuest",       1, "Sky Bandit",          V(-4839.53, 716.37, -2619.44),  V(-4953.21, 295.74, -2899.23)},
+            {175, "SkyQuest",       2, "Dark Master",         V(-4839.53, 716.37, -2619.44),  V(-5259.84, 391.40, -2229.04)},
+            {190, "PrisonerQuest",  1, "Prisoner",            V(5308.93, 1.66, 475.12),       V(5098.97, -0.32, 474.24)},
+            {210, "PrisonerQuest",  2, "Dangerous Prisoner",  V(5308.93, 1.66, 475.12),       V(5654.56, 15.63, 866.30)},
+            {250, "ColosseumQuest", 1, "Toga Warrior",        V(-1580.05, 6.35, -2986.48),    V(-1820.21, 51.68, -2740.67)},
+            {275, "ColosseumQuest", 2, "Gladiator",           V(-1580.05, 6.35, -2986.48),    V(-1292.84, 56.38, -3339.03)},
+            {300, "MagmaQuest",     1, "Military Soldier",    V(-5313.37, 10.95, 8515.29),    V(-5411.16, 11.08, 8454.29)},
+            {325, "MagmaQuest",     2, "Military Spy",        V(-5313.37, 10.95, 8515.29),    V(-5802.87, 86.26, 8828.86)},
+            {375, "FishmanQuest",   1, "Fishman Warrior",     V(61122.65, 18.47, 1568.17),    V(60844.11, 98.46, 1298.40)},
+            {400, "FishmanQuest",   2, "Fishman Commando",    V(61122.65, 18.47, 1568.17),    V(61738.40, 64.21, 1433.84)},
+            {450, "SkyExp1Quest",   1, "God's Guard",         V(-4721.89, 843.87, -1949.97),  V(-4710.04, 845.28, -1927.31)},
+            {475, "SkyExp1Quest",   2, "Shanda",              V(-7859.10, 5544.19, -381.48),  V(-7678.49, 5566.40, -502.39)},
+            {525, "SkyExp2Quest",   1, "Royal Squad",         V(-7906.82, 5634.66, -1411.99), V(-7624.25, 5658.13, -1467.35)},
+            {550, "SkyExp2Quest",   2, "Royal Soldier",       V(-7906.82, 5634.66, -1411.99), V(-7836.75, 5606.91, -1450.75)},
+            {625, "FountainQuest",  1, "Galley Pirate",       V(5254.60, 38.50, 4049.70),     V(5557.17, 152.33, 3998.78)},
+            {650, "FountainQuest",  2, "Galley Captain",      V(5254.60, 38.50, 4049.70),     V(5677.68, 92.79, 4966.63)},
+        },
+        [2] = {
+            {700,  "Area1Quest",        1, "Raider",            V(-427.57, 73.31, 1835.87),     V(-728.33, 52.78, 2345.77)},
+            {725,  "Area1Quest",        2, "Mercenary",         V(-427.57, 73.31, 1835.87),     V(-1004.32, 80.16, 1424.62)},
+            {775,  "Area2Quest",        1, "Swan Pirate",       V(635.61, 73.11, 917.81),       V(1068.66, 137.61, 1322.11)},
+            {800,  "Area2Quest",        2, "Factory Staff",     V(635.61, 73.11, 917.81),       V(73.08, 81.86, -27.47)},
+            {875,  "MarineQuest3",      1, "Marine Lieutenant", V(-2440.80, 71.71, -3216.07),   V(-2842.69, 72.99, -2901.71)},
+            {900,  "MarineQuest3",      2, "Marine Captain",    V(-2440.80, 71.71, -3216.07),   V(-1814.12, 72.99, -3318.82)},
+            {950,  "ZombieQuest",       1, "Zombie",            V(-5492.79, 48.51, -793.71),    V(-5622.03, 48.51, -728.75)},
+            {1000, "ZombieQuest",       2, "Vampire",           V(-5492.79, 48.51, -793.71),    V(-6030.32, 6.43, -1313.56)},
+            {1050, "SnowMountainQuest", 1, "Snow Trooper",      V(607.06, 401.45, -5370.56),    V(535.21, 432.74, -5484.92)},
+            {1100, "SnowMountainQuest", 2, "Winter Warrior",    V(607.06, 401.45, -5370.56),    V(1234.45, 456.95, -5174.13)},
+            {1125, "IceSideQuest",      1, "Lab Subordinate",   V(-6061.84, 15.93, -4902.78),   V(-5720.33, 42.90, -4478.00)},
+            {1175, "IceSideQuest",      2, "Horned Warrior",    V(-6061.84, 15.93, -4902.78),   V(-6341.37, 15.95, -5723.16)},
+            {1200, "FireSideQuest",     1, "Magma Ninja",       V(-5429.54, 15.98, -5297.96),   V(-5428.00, 78.00, -5959.00)},
+            {1250, "FireSideQuest",     2, "Lava Pirate",       V(-5429.54, 15.98, -5297.96),   V(-5213.33, 49.74, -4701.45)},
+            {1275, "ShipQuest1",        1, "Ship Deckhand",     V(1037.80, 125.09, 32911.60),   V(1212.01, 150.79, 33059.25)},
+            {1300, "ShipQuest1",        2, "Ship Engineer",     V(1037.80, 125.09, 32911.60),   V(919.48, 43.54, 32779.97)},
+            {1325, "ShipQuest2",        1, "Ship Steward",      V(968.80, 125.09, 33244.13),    V(919.44, 129.56, 33436.04)},
+            {1350, "ShipQuest2",        2, "Ship Officer",      V(968.80, 125.09, 33244.13),    V(1036.02, 181.43, 33315.73)},
+            {1375, "FrostQuest",        1, "Arctic Warrior",    V(5667.66, 26.80, -6486.09),    V(5966.25, 62.97, -6179.38)},
+            {1425, "FrostQuest",        2, "Snow Lurker",       V(5667.66, 26.80, -6486.09),    V(5407.07, 69.19, -6880.88)},
+            {1450, "ForgottenQuest",    1, "Sea Soldier",       V(-3054.44, 235.54, -10142.82), V(-3028.22, 64.67, -9775.43)},
+            {1475, "ForgottenQuest",    2, "Water Fighter",     V(-3054.44, 235.54, -10142.82), V(-3352.90, 285.02, -10534.84)},
+        },
+        [3] = {
+            {1500, "PiratePortQuest",      1, "Pirate Millionaire",    V(-289.62, 43.82, 5579.92),      V(-435.69, 189.80, 5551.08)},
+            {1525, "PiratePortQuest",      2, "Pistol Billionaire",    V(-289.62, 43.82, 5579.92),      V(-236.54, 217.47, 6006.08)},
+            {1575, "AmazonQuest",          1, "Dragon Crew Warrior",   V(5832.83, 51.69, -1101.52),     V(6141.14, 51.35, -1340.74)},
+            {1600, "AmazonQuest",          2, "Dragon Crew Archer",    V(5832.83, 51.69, -1101.52),     V(6616.42, 441.77, 446.05)},
+            {1625, "AmazonQuest2",         1, "Female Islander",       V(5446.87, 601.62, 749.46),      V(4685.26, 735.81, 815.34)},
+            {1650, "AmazonQuest2",         2, "Giant Islander",        V(5446.87, 601.62, 749.46),      V(4729.09, 590.44, -36.98)},
+            {1700, "MarineTreeIsland",     1, "Marine Commodore",      V(2180.07, 28.73, -6740.06),     V(2286.00, 73.13, -7159.81)},
+            {1725, "MarineTreeIsland",     2, "Marine Rear Admiral",   V(2180.07, 28.73, -6740.06),     V(3656.77, 160.52, -7001.60)},
+            {1775, "DeepForestIsland3",    1, "Fishman Raider",        V(-10581.66, 330.87, -8761.19),  V(-10407.53, 331.76, -8368.52)},
+            {1800, "DeepForestIsland3",    2, "Fishman Captain",       V(-10581.66, 330.87, -8761.19),  V(-10994.70, 352.38, -9002.11)},
+            {1825, "DeepForestIsland",     1, "Forest Pirate",         V(-13234.04, 331.49, -7625.40),  V(-13274.48, 332.38, -7769.58)},
+            {1850, "DeepForestIsland",     2, "Mythological Pirate",   V(-13234.04, 331.49, -7625.40),  V(-13680.61, 501.08, -6991.19)},
+            {1900, "DeepForestIsland2",    1, "Jungle Pirate",         V(-12680.38, 389.97, -9902.02),  V(-12256.16, 331.74, -10485.84)},
+            {1925, "DeepForestIsland2",    2, "Musketeer Pirate",      V(-12680.38, 389.97, -9902.02),  V(-13457.90, 391.55, -9859.18)},
+            {1975, "HauntedQuest1",        1, "Reborn Skeleton",       V(-9479.22, 141.22, 5566.09),    V(-8763.72, 165.72, 6159.86)},
+            {2000, "HauntedQuest1",        2, "Living Zombie",         V(-9479.22, 141.22, 5566.09),    V(-10144.13, 138.63, 5838.09)},
+            {2025, "HauntedQuest2",        1, "Demonic Soul",          V(-9516.99, 172.02, 6078.47),    V(-9505.34, 172.10, 6158.99)},
+            {2050, "HauntedQuest2",        2, "Posessed Mummy",        V(-9516.99, 172.02, 6078.47),    V(-9582.02, 6.25, 6205.48)},
+            {2075, "NutQuest1",            1, "Peanut Scout",          V(-2104.39, 38.13, -10194.22),   V(-2143.24, 47.72, -10029.99)},
+            {2100, "NutQuest1",            2, "Peanut President",      V(-2104.39, 38.13, -10194.22),   V(-1859.35, 38.10, -10422.43)},
+            {2125, "IceCreamIslandQuest",  1, "Ice Cream Chef",        V(-820.65, 65.82, -10965.80),    V(-872.25, 65.82, -10919.96)},
+            {2150, "IceCreamIslandQuest",  2, "Ice Cream Commander",   V(-820.65, 65.82, -10965.80),    V(-558.06, 112.05, -11290.77)},
+            {2200, "CakeQuest1",           1, "Cookie Crafter",        V(-2021.32, 37.80, -12028.73),   V(-2374.14, 37.80, -12125.31)},
+            {2225, "CakeQuest1",           2, "Cake Guard",            V(-2021.32, 37.80, -12028.73),   V(-1598.31, 43.77, -12244.58)},
+            {2250, "CakeQuest2",           1, "Baking Staff",          V(-1927.92, 37.80, -12842.54),   V(-1887.80, 77.62, -12998.35)},
+            {2275, "CakeQuest2",           2, "Head Baker",            V(-1927.92, 37.80, -12842.54),   V(-2216.19, 82.88, -12869.29)},
+            {2300, "ChocQuest1",           1, "Cocoa Warrior",         V(233.22, 29.88, -12201.23),     V(-21.07, 80.57, -12352.39)},
+            {2325, "ChocQuest1",           2, "Chocolate Bar Battler", V(233.22, 29.88, -12201.23),     V(582.59, 77.19, -12463.16)},
+            {2350, "ChocQuest2",           1, "Sweet Thief",          V(150.51, 30.69, -12774.50),     V(165.19, 76.81, -12600.84)},
+            {2375, "ChocQuest2",           2, "Candy Rebel",           V(150.51, 30.69, -12774.50),     V(134.87, 77.44, -12876.54)},
+            {2400, "CandyQuest1",          1, "Candy Pirate",          V(-1149.33, 13.02, -14445.61),   V(-1310.50, 26.02, -14562.40)},
+            {2425, "CandyQuest1",          2, "Snow Demon",            V(-1149.33, 13.02, -14445.61),   V(-880.20, 71.25, -14538.61)},
+            {2450, "TikiQuest1",           1, "Isle Outlaw",           V(-16547.75, 61.14, -173.41),    V(-16442.81, 116.14, -264.46)},
+            {2475, "TikiQuest1",           2, "Island Boy",            V(-16547.75, 61.14, -173.41),    V(-16901.27, 84.07, -192.89)},
+            {2500, "TikiQuest2",           1, "Sun-kissed Warrior",    V(-16539.08, 55.69, 1051.57),    V(-16349.84, 92.07, 1106.46)},
+             {2525, "TikiQuest2",           2, "Isle Champion",         V(-16539.08, 55.69, 1051.57),    V(-16347.23, 80.17, 1121.39)},
+             {2550, "TikiQuest3",           2, "Serpent Hunter",         V(-16665.20, 111.95, 1577.82),    V(-16573.97, 107.05, 1401.19)},
+             {2575, "TikiQuest3",           2, "Skull Slayer",         V(-16665.20, 111.95, 1577.82),    V(-16720.50, 71.27, 1653.92)},
+        },
+    }
+
+    function GetQuestData()
+        local level = getLevel()
+        local list = World1 and QUESTS[1] or (World2 and QUESTS[2] or QUESTS[3])
+        local pick = list[1]
+        for _, q in ipairs(list) do
+            if level >= q[1] then pick = q else break end
+        end
+        -- tên quest, số quest, tên quái, vị trí NPC, vị trí quái
+        return pick[2], pick[3], pick[4], pick[5], pick[6]
+    end
+
+    local spawnCache = {}
+    local function norm(n)
+        local s = string.lower(tostring(n))
+        s = string.gsub(s, "%s*%[.-%]%s*$", "")
+        s = string.gsub(s, "possessed", "posessed")
+        return s
+    end
+
+    -- Tìm điểm hồi sinh THẬT của quái trong workspace._WorldOrigin.EnemySpawns
+    -- (gần vị trí dự phòng nhất). Trả về nil nếu không tìm thấy.
+    function GetQuestMobSpawn(mobName, nearPos)
+        if not mobName then return nil end
+        local cached = spawnCache[mobName]
+        if cached and tick() - cached.t < 10 then return cached.pos end
+
+        local want = norm(mobName)
+        local origin = nearPos
+        if not origin then
+            local hrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+            origin = hrp and hrp.Position
+        end
+
+        local best, bestDist = nil, math.huge
+        local wo = workspace:FindFirstChild("_WorldOrigin")
+        local spawns = wo and wo:FindFirstChild("EnemySpawns")
+        if spawns then
+            for pass = 1, 2 do
+                for _, sp in ipairs(spawns:GetChildren()) do
+                    local n = norm(sp.Name)
+                    if (pass == 1 and n == want) or (pass == 2 and string.find(n, want, 1, true)) then
+                        local pos
+                        if sp:IsA("BasePart") then
+                            pos = sp.Position
+                        else
+                            local ok, cf = pcall(function() return sp:GetPivot() end)
+                            pos = ok and cf and cf.Position or nil
+                        end
+                        if pos then
+                            local d = origin and (pos - origin).Magnitude or 0
+                            if d < bestDist then best, bestDist = pos, d end
+                        end
+                    end
+                end
+                if best then break end
+            end
+        end
+
+        spawnCache[mobName] = {t = tick(), pos = best}
+        return best
+    end
+end
+
+-- HÀM LẤY NHIỆM VỤ ĐẢO XƯƠNG (HAUNTED CASTLE) DỰA THEO CẤP ĐỘ
+local function GetHauntedQuestData()
+    local level = getLevel()
+    if level < 2000 then
+        return "HauntedQuest1", 1, "Reborn Skeleton", Vector3.new(-9479.22, 141.22, 5566.09), Vector3.new(-8763.72, 165.72, 6159.86)
+    elseif level < 2025 then
+        return "HauntedQuest1", 2, "Living Zombie", Vector3.new(-9479.22, 141.22, 5566.09), Vector3.new(-10144.13, 138.63, 5838.09)
+    elseif level < 2050 then
+        return "HauntedQuest2", 1, "Demonic Soul", Vector3.new(-9516.99, 172.02, 6078.47), Vector3.new(-9505.34, 172.10, 6158.99)
+    else
+        return "HauntedQuest2", 2, "Posessed Mummy", Vector3.new(-9516.99, 172.02, 6078.47), Vector3.new(-9582.02, 6.25, 6205.48)
+    end
+end
+
+-- ===================== HỆ THỐNG QUÉT QUEST =====================
+-- Vấn đề cũ: chỉ dựa vào Main.Quest.Visible. Nếu bản game của bạn dùng giao diện quest khác
+-- thì script luôn tưởng "chưa có quest" -> nhận lại liên tục. Bản này dùng 3 lớp phát hiện:
+--   (1) Main.Quest.Visible (kiểu cũ)
+--   (2) quét mọi TextLabel đang hiện có chữ "Defeat ... <tên quái>" (kiểu giao diện mới)
+--   (3) dự phòng: tự đếm số quái đã giết từ lúc nhận quest, đủ số mới nhận tiếp
+
+-- (Gom biến vào bảng Q vì Luau giới hạn 200 biến local ở cấp cao nhất)
+local Q = {
+    QUEST_DEBUG = true,          -- in log [Quest] ra console (F9)
+    QUEST_HIDE_GRACE = 2.5,      -- quest vừa xong -> chờ rồi nhận quest mới
+    QUEST_LOST_WAIT = 10,        -- GUI tắt khi CHƯA đánh đủ -> chờ lâu hơn
+    QUEST_RETRY_DELAY = 4,       -- tối thiểu giữa 2 lần gọi StartQuest
+    QUEST_RESPAWN_WAIT = 5,      -- chờ GUI load lại sau khi hồi sinh
+    QUEST_DEFAULT_KILLS = 8,     -- số quái mặc định khi không đọc được tiến độ (chế độ dự phòng)
+    QUEST_MAX_TIME = 240,        -- chế độ dự phòng: tối đa bao lâu coi là còn quest
+    questAttempts = 0, lastQuestAttempt = 0, questGiveUpUntil = 0,
+    acceptedQuestKey = nil,
+    lastQuestSeen = 0,
+    lastCharSpawn = tick(),
+    lastCur = nil, lastTotal = nil,
+    genericSeenAt = 0,
+    currentQuestMobName = nil,
+    guiDetectionWorks = false,
+    questAcceptedAt = 0,
+    killsSinceAccept = 0,
+    hookedMobs = setmetatable({}, {__mode = "k"}),
+}
+
+function Q.qlog(...)
+    if Q.QUEST_DEBUG then print("[Quest]", ...) end
+end
+
+local function getCommF()
+    local remotes = ReplicatedStorage:FindFirstChild("Remotes")
+    return remotes and remotes:FindFirstChild("CommF_")
+end
+
+-- Chuẩn hoá tên quái: bỏ "[Lv. x]", gộp chính tả "Possessed/Posessed"
+function Q.normMob(n)
+    local s = string.lower(tostring(n))
+    s = string.gsub(s, "%s*%[.-%]%s*$", "")
+    s = string.gsub(s, "possessed", "posessed")
+    return s
+end
+
+-- 2 = trùng tên hoàn toàn, 1 = tên chứa tên quest, 0 = không khớp
+function Q.mobMatches(enemyName, questMob)
+    if not questMob then return 0 end
+    local a, b = Q.normMob(enemyName), Q.normMob(questMob)
+    if a == b then return 2 end
+    if string.find(a, b, 1, true) then return 1 end
+    return 0
+end
+
+-- Fishman Island (Sea 1) và Cursed Ship (Sea 2) cần "requestEntrance" mới vào được.
+-- Trả về true nếu vừa dịch chuyển (vòng lặp nên chờ lượt sau).
+function Q.enterIfNeeded(hrp, pos)
+    local commF = getCommF()
+    if not commF or not hrp or not pos then return false end
+    local entrance
+    if World1 and pos.X > 50000 and hrp.Position.X < 50000 then
+        entrance = Vector3.new(61163.8515625, 5.342342376708252, 1819.7841796875)
+    elseif World2 and pos.Z > 30000 and hrp.Position.Z < 30000 then
+        entrance = Vector3.new(923.21252441406, 126.9760055542, 32852.83203125)
+    end
+    if not entrance then return false end
+    if tick() - (Q.lastEntrance or 0) < 6 then return false end
+    Q.lastEntrance = tick()
+    Q.qlog("requestEntrance ->", entrance)
+    pcall(function() commF:InvokeServer("requestEntrance", entrance) end)
+    task.wait(1)
+    return true
+end
+
+LocalPlayer.CharacterAdded:Connect(function()
+    Q.lastCharSpawn = tick()
+end)
+
+function Q.isGuiShown(obj)
+    local pg = LocalPlayer.PlayerGui
+    local cur = obj
+    while cur and cur ~= pg do
+        if cur:IsA("GuiObject") and not cur.Visible then return false end
+        if cur:IsA("ScreenGui") and not cur.Enabled then return false end
+        cur = cur.Parent
+    end
+    return true
+end
+
+-- (1) kiểu cũ
+function Q.classicQuestVisible()
+    local mainGui = LocalPlayer.PlayerGui:FindFirstChild("Main")
+    local q = mainGui and mainGui:FindFirstChild("Quest")
+    return (q and q.Visible) == true
+end
+
+function Q.findProgressIn(root)
+    for _, d in ipairs(root:GetDescendants()) do
+        if d:IsA("TextLabel") and d.Text ~= "" then
+            local c, t = string.match(d.Text, "^%s*%(?(%d+)%s*/%s*(%d+)%)?%s*$")
+            if not c then c, t = string.match(d.Text, "(%d+)%s*/%s*(%d+)") end
+            if c and t then return tonumber(c), tonumber(t) end
+        end
+    end
+    return nil, nil
+end
+
+-- (2) quét tổng quát: nhãn đang hiện chứa "defeat" và tên quái (vd "Defeat 8 Living Zombies")
+function Q.genericQuestScan(mobName)
+    local lm = string.lower(mobName)
+    for _, d in ipairs(LocalPlayer.PlayerGui:GetDescendants()) do
+        if d:IsA("TextLabel") and d.Text ~= "" then
+            local t = string.lower(d.Text)
+            if string.find(t, "defeat", 1, true) and string.find(t, lm, 1, true) and Q.isGuiShown(d) then
+                -- tìm tiến độ x/y gần đó (lên tối đa 3 cấp cha)
+                local c, tot
+                local p = d.Parent
+                for _ = 1, 3 do
+                    if not p or p == LocalPlayer.PlayerGui then break end
+                    c, tot = Q.findProgressIn(p)
+                    if c then break end
+                    p = p.Parent
+                end
+                return true, c, tot
+            end
+        end
+    end
+    return false
+end
+
+-- HasQuest: đang có quest hay không (kết hợp lớp 1 + lớp 2)
+local function HasQuest()
+    if Q.classicQuestVisible() then return true end
+    return tick() - Q.genericSeenAt < 1.6
+end
+
+-- (3) đếm quái đã giết (chỉ đếm quái đúng tên quest, gần người chơi)
+function Q.hookMob(mob)
+    if Q.hookedMobs[mob] then return end
+    local hum = mob:FindFirstChildOfClass("Humanoid")
+    if not hum then return end
+    Q.hookedMobs[mob] = true
+    hum.Died:Connect(function()
+        if Q.currentQuestMobName and string.find(string.lower(mob.Name), string.lower(Q.currentQuestMobName), 1, true) then
+            local myHrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+            local mobHrp = mob:FindFirstChild("HumanoidRootPart")
+            if myHrp and mobHrp and (myHrp.Position - mobHrp.Position).Magnitude < 250 then
+                Q.killsSinceAccept += 1
+            end
+        end
+    end)
+end
+
+task.spawn(function()
+    local enemies = workspace:WaitForChild("Enemies", 30)
+    if not enemies then return end
+    for _, m in ipairs(enemies:GetChildren()) do Q.hookMob(m) end
+    enemies.ChildAdded:Connect(function(m)
+        task.wait(0.2)
+        Q.hookMob(m)
+    end)
+end)
+
+function Q.dumpQuestGui()
+    local n = 0
+    pcall(function()
+        for _, d in ipairs(LocalPlayer.PlayerGui:GetDescendants()) do
+            if d:IsA("TextLabel") and d.Text ~= "" and Q.isGuiShown(d) and n < 30 then
+                n += 1
+                Q.qlog("GUI:", d:GetFullName(), "=", d.Text)
+            end
+        end
+    end)
+end
+
+-- Luồng nền: cập nhật trạng thái quest + tiến độ
+task.spawn(function()
+    local lastGeneric = 0
+    while true do
+        task.wait(0.2)
+        if Q.classicQuestVisible() then
+            Q.guiDetectionWorks = true
+            Q.lastQuestSeen = tick()
+            local mainGui = LocalPlayer.PlayerGui:FindFirstChild("Main")
+            local q = mainGui and mainGui:FindFirstChild("Quest")
+            if q then
+                local c, t = Q.findProgressIn(q)
+                if c then
+                    if c ~= Q.lastCur or t ~= Q.lastTotal then Q.qlog("Tiến độ:", c .. "/" .. t) end
+                    Q.lastCur, Q.lastTotal = c, t
+                end
+            end
+        elseif Q.currentQuestMobName and tick() - lastGeneric >= 1 then
+            lastGeneric = tick()
+            local ok, found, c, t = pcall(Q.genericQuestScan, Q.currentQuestMobName)
+            if ok and found then
+                Q.genericSeenAt = tick()
+                Q.guiDetectionWorks = true
+                Q.lastQuestSeen = tick()
+                if c then
+                    if c ~= Q.lastCur or t ~= Q.lastTotal then Q.qlog("Tiến độ:", c .. "/" .. t) end
+                    Q.lastCur, Q.lastTotal = c, t
+                end
+            end
+        end
+    end
+end)
+
+-- Trả về TRUE khi đang có quest (hoặc cho phép đi farm luôn),
+-- FALSE khi đang trong quá trình nhận quest.
+-- QUY TẮC: còn quest thì tuyệt đối không nhận lại / không huỷ -> làm xong mới nhận quest tiếp theo.
+local function claimQuestCore(questName, questLevel, mobName, questNpcPos)
+    if not questName then return true end
+    Q.currentQuestMobName = mobName
+    local key = tostring(questName) .. ":" .. tostring(questLevel)
+
+    -- 1) Đang có quest -> cứ đánh tiếp
+    if HasQuest() then
+        Q.lastQuestSeen = tick()
+        if Q.acceptedQuestKey == nil then Q.acceptedQuestKey = key end
+        Q.questAttempts = 0
+        return true
+    end
+
+    -- 2) Vừa hồi sinh: chờ GUI load lại rồi mới kết luận
+    if tick() - Q.lastCharSpawn < Q.QUEST_RESPAWN_WAIT then return false end
+
+    -- 3a) Chế độ dự phòng (không đọc được GUI quest): dựa vào số quái đã giết từ lúc nhận quest
+    if not Q.guiDetectionWorks and Q.questAcceptedAt > 0 then
+        local need = Q.lastTotal or Q.QUEST_DEFAULT_KILLS
+        if Q.killsSinceAccept < need and tick() - Q.questAcceptedAt < Q.QUEST_MAX_TIME then
+            return true
+        end
+        Q.qlog("Chế độ dự phòng: đã giết", Q.killsSinceAccept .. "/" .. need, "-> nhận quest mới")
+    end
+
+    -- 3b) GUI quest vừa tắt: phân biệt "quest đã xong" và "GUI lỗi"
+    if Q.guiDetectionWorks and Q.lastQuestSeen > 0 then
+        local finished = (Q.lastCur == nil) or (Q.lastTotal == nil) or (Q.lastCur >= Q.lastTotal - 1)
+        local waitNeeded = finished and Q.QUEST_HIDE_GRACE or Q.QUEST_LOST_WAIT
+        if tick() - Q.lastQuestSeen < waitNeeded then
+            return true
+        end
+    end
+
+    if tick() < Q.questGiveUpUntil then return true end
+    if tick() - Q.lastQuestAttempt < Q.QUEST_RETRY_DELAY then return false end
+
+    local character = LocalPlayer.Character
+    local hrp = character and character:FindFirstChild("HumanoidRootPart")
+    if not hrp then return false end
+
+    local commF = getCommF()
+    if not commF then return true end
+
+    if Q.enterIfNeeded(hrp, questNpcPos) then return false end
+
+    if (hrp.Position - questNpcPos).Magnitude > 30 then
+        Q.qlog("Cần nhận quest mới -> bay tới NPC:", questName, questLevel)
+        flyTo(CFrame.new(questNpcPos + Vector3.new(0, 5, 0)))
+        if not autoFarmEnabled then return false end
+        hrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+        if not hrp then return false end
+        if HasQuest() then Q.lastQuestSeen = tick(); return true end
+    end
+
+    Q.lastQuestAttempt = tick()
+    Q.questAttempts += 1
+    Q.qlog("StartQuest", questName, questLevel, "(lần " .. Q.questAttempts .. ")")
+    local okCall = pcall(function() commF:InvokeServer("StartQuest", questName, questLevel) end)
+
+    -- Chờ GUI quest hiện ra (tối đa 4s)
+    local t0 = tick()
+    while tick() - t0 < 4 and not HasQuest() do
+        -- kiểm tra thêm bằng quét tổng quát cho giao diện mới
+        local ok, found = pcall(Q.genericQuestScan, mobName)
+        if ok and found then Q.genericSeenAt = tick(); Q.guiDetectionWorks = true end
+        task.wait(0.15)
+    end
+
+    if HasQuest() then
+        Q.questAttempts = 0
+        Q.acceptedQuestKey = key
+        Q.questAcceptedAt = tick()
+        Q.killsSinceAccept = 0
+        Q.lastQuestSeen = tick()
+        Q.lastCur, Q.lastTotal = nil, nil
+        cancelFarmTween()
+        targetEnemy = nil
+        Q.qlog("Đã nhận quest (thấy GUI), đi farm")
+        return true
+    end
+
+    if okCall and not Q.guiDetectionWorks then
+        -- Gọi remote không lỗi nhưng không đọc được GUI -> coi như đã nhận, dùng chế độ đếm quái
+        Q.questAttempts = 0
+        Q.acceptedQuestKey = key
+        Q.questAcceptedAt = tick()
+        Q.killsSinceAccept = 0
+        Q.lastCur, Q.lastTotal = nil, nil
+        cancelFarmTween()
+        targetEnemy = nil
+        Q.qlog("KHÔNG đọc được GUI quest -> dùng chế độ đếm quái. Gửi dòng GUI bên dưới cho dev:")
+        Q.dumpQuestGui()
+        return true
+    end
+
+    if Q.questAttempts >= 3 then
+        Q.questAttempts = 0
+        Q.questGiveUpUntil = tick() + 20
+        Q.qlog("Nhận quest thất bại 3 lần, bỏ qua 20s để farm")
+        return true
+    end
+    return false
+end
+
+local function ClaimQuest()
+    if not autoQuestEnabled then return true end
+    local questName, questLevel, mobName, questNpcPos = GetQuestData()
+    return claimQuestCore(questName, questLevel, mobName, questNpcPos)
+end
+
+-- HÀM TỰ ĐỘNG NHẬN QUEST TẠI ĐẢO XƯƠNG (SEA 3)
+local function ClaimBonesQuest()
+    if not autoQuestEnabled or not World3 then return true end
+    local questName, questLevel, mobName, questNpcPos = GetHauntedQuestData()
+    return claimQuestCore(questName, questLevel, mobName, questNpcPos)
+end
+
+-- UI HELPERS & THEME CONFIG (MINH HUB STYLE)
+local BANANA_YELLOW       = Color3.fromRGB(255, 208, 56)   -- vàng chuối (điểm nhấn)
+local BANANA_DARK         = Color3.fromRGB(98, 98, 106)    -- viền sáng quanh cửa sổ
+local BANANA_BG           = Color3.fromRGB(30, 30, 35)
+local BANANA_SIDEBAR      = Color3.fromRGB(22, 22, 26)
+local BANANA_CARD         = Color3.fromRGB(40, 40, 46)
+local BANANA_CARD_BORDER  = Color3.fromRGB(52, 52, 59)
+local BANANA_TEXT_ON      = Color3.fromRGB(30, 22, 0)      -- chữ tối đặt trên nền vàng
+
+local function addCorner(parent, radius)
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(0, radius)
+    corner.Parent = parent
+    return corner
+end
+
+local function addStroke(parent, color, thickness)
+    local stroke = Instance.new("UIStroke")
+    stroke.Color = color
+    stroke.Thickness = thickness
+    stroke.Parent = parent
+    return stroke
+end
+
+local function getTargetParent()
+    local ok, hui = pcall(gethui)
+    if ok and hui then return hui end
+    local okCore, coreGui = pcall(function() return game:GetService("CoreGui") end)
+    if okCore and coreGui then return coreGui end
+    return LocalPlayer:WaitForChild("PlayerGui", 10) or LocalPlayer:WaitForChild("PlayerGui")
+end
+
+local uiContainer = getTargetParent()
+
+pcall(function()
+    for _, oldName in ipairs({"MinhHubBloxFruits", "BananaCatHub", "RedzHubBloxFruits"}) do
+        if uiContainer:FindFirstChild(oldName) then
+            uiContainer[oldName]:Destroy()
+        end
+    end
+end)
+
+-- TẠO UI GIAO DIỆN MENU
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "MinhHubBloxFruits"
+screenGui.ResetOnSpawn = false
+screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+screenGui.DisplayOrder = 999999
+screenGui.Enabled = true
+
+pcall(function()
+    if syn and type(syn) == "table" and syn.protect_gui then
+        syn.protect_gui(screenGui)
+    end
+end)
+screenGui.Parent = uiContainer
+
+local toggleBtn = Instance.new("ImageButton")
+toggleBtn.Name = "MinhHubOpenButton"
+toggleBtn.Size = UDim2.new(0, 56, 0, 56)
+toggleBtn.Position = UDim2.new(0, 20, 0.15, 0)
+toggleBtn.BackgroundColor3 = BANANA_SIDEBAR
+toggleBtn.Image = ""
+toggleBtn.ImageColor3 = BANANA_YELLOW
+toggleBtn.Parent = screenGui
+addCorner(toggleBtn, 28)
+addStroke(toggleBtn, BANANA_YELLOW, 2)
+do
+    local bananaIcon = Instance.new("TextLabel")
+    bananaIcon.Size = UDim2.new(1, 0, 1, 0)
+    bananaIcon.BackgroundTransparency = 1
+    bananaIcon.Text = "M"
+    bananaIcon.TextColor3 = BANANA_YELLOW
+    bananaIcon.TextSize = 28
+    bananaIcon.Font = Enum.Font.GothamBlack
+    bananaIcon.Active = false
+    bananaIcon.Parent = toggleBtn
+end
+
+local mainFrame = Instance.new("Frame")
+mainFrame.Name = "MainFrame"
+mainFrame.Size = UDim2.new(0, 640, 0, 400)
+mainFrame.Position = UDim2.new(0.5, -320, 0.5, -200)
+mainFrame.BackgroundColor3 = BANANA_BG
+mainFrame.BorderSizePixel = 0
+mainFrame.ClipsDescendants = true
+mainFrame.Visible = true
+mainFrame.Parent = screenGui
+addCorner(mainFrame, 12)
+do
+    local winStroke = addStroke(mainFrame, BANANA_DARK, 2)
+    winStroke.Transparency = 0.15
+    local strokeGrad = Instance.new("UIGradient")
+    strokeGrad.Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, BANANA_YELLOW),
+        ColorSequenceKeypoint.new(0.45, BANANA_DARK),
+        ColorSequenceKeypoint.new(1, BANANA_YELLOW),
+    })
+    strokeGrad.Rotation = 35
+    strokeGrad.Parent = winStroke
+
+    local bgGrad = Instance.new("UIGradient")
+    bgGrad.Color = ColorSequence.new(Color3.fromRGB(255, 255, 255), Color3.fromRGB(205, 205, 210))
+    bgGrad.Rotation = 90
+    bgGrad.Parent = mainFrame
+
+    local menuScale = Instance.new("UIScale")
+    menuScale.Name = "MenuScale"
+    menuScale.Scale = 1
+    menuScale.Parent = mainFrame
+end
+
+local header = Instance.new("Frame")
+header.Name = "Header"
+header.Size = UDim2.new(1, 0, 0, 46)
+header.BackgroundColor3 = BANANA_BG
+header.BorderSizePixel = 0
+header.Parent = mainFrame
+
+do
+    local headGrad = Instance.new("UIGradient")
+    headGrad.Color = ColorSequence.new(Color3.fromRGB(255, 255, 255), Color3.fromRGB(190, 190, 196))
+    headGrad.Rotation = 90
+    headGrad.Parent = header
+
+    local headLine = Instance.new("Frame")
+    headLine.Name = "HeaderLine"
+    headLine.Size = UDim2.new(1, 0, 0, 1)
+    headLine.Position = UDim2.new(0, 0, 1, -1)
+    headLine.BackgroundColor3 = BANANA_CARD_BORDER
+    headLine.BorderSizePixel = 0
+    headLine.Parent = header
+end
+
+local headerTitle = Instance.new("TextLabel")
+headerTitle.Size = UDim2.new(1, -160, 1, 0)
+headerTitle.Position = UDim2.new(0, 80, 0, 0)
+headerTitle.BackgroundTransparency = 1
+headerTitle.Text = "<font color=\"#FFD038\">MInh HUB</font><font color=\"#FFFFFF\">-BLOXFRUITS</font>"
+headerTitle.RichText = true
+headerTitle.TextColor3 = Color3.fromRGB(255, 255, 255)
+headerTitle.TextSize = 16
+headerTitle.Font = Enum.Font.GothamBlack
+headerTitle.TextXAlignment = Enum.TextXAlignment.Center
+headerTitle.Parent = header
+
+local headerIcon = Instance.new("TextLabel")
+headerIcon.Size = UDim2.new(0, 36, 0, 36)
+headerIcon.Position = UDim2.new(0, 10, 0, 5)
+headerIcon.BackgroundTransparency = 1
+headerIcon.Text = ""
+headerIcon.TextSize = 24
+headerIcon.Font = Enum.Font.GothamBold
+headerIcon.Parent = header
+
+local closeBtn = Instance.new("TextButton")
+closeBtn.Size = UDim2.new(0, 30, 0, 30)
+closeBtn.Position = UDim2.new(1, -38, 0, 8)
+closeBtn.BackgroundColor3 = BANANA_CARD
+closeBtn.Text = "✕"
+closeBtn.TextColor3 = Color3.fromRGB(200, 200, 200)
+closeBtn.TextSize = 14
+closeBtn.Font = Enum.Font.GothamBold
+closeBtn.Parent = header
+addCorner(closeBtn, 8)
+
+local minimizeBtn = Instance.new("TextButton")
+minimizeBtn.Size = UDim2.new(0, 30, 0, 30)
+minimizeBtn.Position = UDim2.new(1, -74, 0, 8)
+minimizeBtn.BackgroundColor3 = BANANA_CARD
+minimizeBtn.Text = "—"
+minimizeBtn.TextColor3 = Color3.fromRGB(200, 200, 200)
+minimizeBtn.TextSize = 14
+minimizeBtn.Font = Enum.Font.GothamBold
+minimizeBtn.Parent = header
+addCorner(minimizeBtn, 8)
+
+local sidebar = Instance.new("Frame")
+sidebar.Name = "Sidebar"
+sidebar.Size = UDim2.new(0, 160, 1, -46)
+sidebar.Position = UDim2.new(0, 0, 0, 46)
+sidebar.BackgroundColor3 = BANANA_SIDEBAR
+sidebar.BorderSizePixel = 0
+sidebar.Parent = mainFrame
+
+do
+    local sideLine = Instance.new("Frame")
+    sideLine.Name = "SidebarLine"
+    sideLine.Size = UDim2.new(0, 1, 1, -46)
+    sideLine.Position = UDim2.new(0, 159, 0, 46)
+    sideLine.BackgroundColor3 = BANANA_CARD_BORDER
+    sideLine.BorderSizePixel = 0
+    sideLine.Parent = mainFrame -- KHÔNG đặt trong sidebar: sẽ bị UIListLayout xếp và đẩy hết tab ra ngoài
+end
+
+local sidebarList = Instance.new("UIListLayout")
+sidebarList.Parent = sidebar
+sidebarList.SortOrder = Enum.SortOrder.LayoutOrder
+sidebarList.Padding = UDim.new(0, 8)
+sidebarList.HorizontalAlignment = Enum.HorizontalAlignment.Center
+
+local sidebarPadding = Instance.new("UIPadding")
+sidebarPadding.PaddingTop = UDim.new(0, 14)
+sidebarPadding.Parent = sidebar
+
+local pageTitle = Instance.new("TextLabel")
+pageTitle.Name = "PageTitle"
+pageTitle.Size = UDim2.new(1, -230, 0, 26)
+pageTitle.Position = UDim2.new(0, 172, 0, 52)
+pageTitle.BackgroundTransparency = 1
+pageTitle.Text = "Farm"
+pageTitle.TextColor3 = Color3.fromRGB(255, 255, 255)
+pageTitle.TextSize = 15
+pageTitle.Font = Enum.Font.GothamBold
+pageTitle.TextXAlignment = Enum.TextXAlignment.Left
+pageTitle.Parent = mainFrame
+
+do
+    local titleUnderline = Instance.new("Frame")
+    titleUnderline.Name = "TitleUnderline"
+    titleUnderline.Size = UDim2.new(0, 28, 0, 3)
+    titleUnderline.Position = UDim2.new(0, 172, 0, 78)
+    titleUnderline.BackgroundColor3 = BANANA_YELLOW
+    titleUnderline.BorderSizePixel = 0
+    titleUnderline.Parent = mainFrame
+    addCorner(titleUnderline, 2)
+end
+
+local pagesFolder = Instance.new("Frame")
+pagesFolder.Name = "Pages"
+pagesFolder.Size = UDim2.new(1, -180, 1, -94)
+pagesFolder.Position = UDim2.new(0, 170, 0, 88)
+pagesFolder.BackgroundTransparency = 1
+pagesFolder.Parent = mainFrame
+
+local tabs = {}
+local function createTab(tabName, iconText, isDefault)
+    local tabBtn = Instance.new("TextButton")
+    tabBtn.Size = UDim2.new(0.92, 0, 0, 30)
+    tabBtn.BackgroundTransparency = 1
+    tabBtn.Text = tabName
+    tabBtn.TextColor3 = isDefault and Color3.fromRGB(255, 255, 255) or Color3.fromRGB(165, 165, 175)
+    tabBtn.Font = Enum.Font.GothamMedium
+    tabBtn.TextSize = 12
+    tabBtn.TextXAlignment = Enum.TextXAlignment.Left
+    tabBtn.Parent = sidebar
+
+    local tabPad = Instance.new("UIPadding")
+    tabPad.PaddingLeft = UDim.new(0, 14)
+    tabPad.Parent = tabBtn
+
+    -- thanh vàng nhỏ bên trái tab đang chọn
+    local indicator = Instance.new("Frame")
+    indicator.Size = UDim2.new(0, 3, 0, 16)
+    indicator.AnchorPoint = Vector2.new(0, 0.5)
+    indicator.Position = UDim2.new(0, -12, 0.5, 0)
+    indicator.BackgroundColor3 = BANANA_YELLOW
+    indicator.BorderSizePixel = 0
+    indicator.Visible = isDefault
+    indicator.Parent = tabBtn
+    addCorner(indicator, 2)
+
+    local page = Instance.new("ScrollingFrame")
+    page.Name = tabName .. "Page"
+    page.Size = UDim2.new(1, 0, 1, 0)
+    page.BackgroundTransparency = 1
+    page.BorderSizePixel = 0
+    page.ScrollBarThickness = 3
+    page.ScrollBarImageColor3 = BANANA_YELLOW
+    page.Visible = isDefault
+    page.Parent = pagesFolder
+
+    local pageLayout = Instance.new("UIListLayout")
+    pageLayout.Parent = page
+    pageLayout.SortOrder = Enum.SortOrder.LayoutOrder
+    pageLayout.Padding = UDim.new(0, 6)
+    pageLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+
+    local pagePadding = Instance.new("UIPadding")
+    pagePadding.PaddingRight = UDim.new(0, 8)
+    pagePadding.Parent = page
+
+    if isDefault then pageTitle.Text = tabName end
+
+    tabBtn.MouseEnter:Connect(function()
+        if not page.Visible then
+            TweenService:Create(tabBtn, TweenInfo.new(0.12), {TextColor3 = Color3.fromRGB(225, 225, 232)}):Play()
+        end
+    end)
+    tabBtn.MouseLeave:Connect(function()
+        if not page.Visible then
+            TweenService:Create(tabBtn, TweenInfo.new(0.12), {TextColor3 = Color3.fromRGB(165, 165, 175)}):Play()
+        end
+    end)
+
+    tabBtn.MouseButton1Click:Connect(function()
+        if page.Visible then return end
+        for _, data in pairs(tabs) do
+            data.Page.Visible = false
+            data.Indicator.Visible = false
+            data.Button.TextColor3 = Color3.fromRGB(165, 165, 175)
+        end
+        page.Position = UDim2.new(0, 16, 0, 0)
+        page.Visible = true
+        TweenService:Create(page, TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Position = UDim2.new(0, 0, 0, 0)}):Play()
+        indicator.Size = UDim2.new(0, 3, 0, 4)
+        indicator.Visible = true
+        TweenService:Create(indicator, TweenInfo.new(0.22, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {Size = UDim2.new(0, 3, 0, 16)}):Play()
+        tabBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+        pageTitle.Text = tabName
+    end)
+
+    tabs[tabName] = {Button = tabBtn, Page = page, Indicator = indicator}
+    return page
+end
+
+local farmPage     = createTab("Farm", "⚔️", true)
+local bossPage     = createTab("Boss", "👑", false)
+local raidPage     = createTab("Raid", "🔥", false)
+local gachaPage    = createTab("Gacha", "🎲", false)
+local shopPage     = createTab("Shop", "🛒", false)
+local settingsPage = createTab("Config", "⚙️", false)
+
+do
+    local searchWrap = Instance.new("Frame")
+    searchWrap.Name = "SearchWrap"
+    searchWrap.Size = UDim2.new(0.92, 0, 0, 30)
+    searchWrap.LayoutOrder = -10
+    searchWrap.BackgroundColor3 = BANANA_CARD
+    searchWrap.Parent = sidebar
+    addCorner(searchWrap, 8)
+    addStroke(searchWrap, BANANA_CARD_BORDER, 1)
+
+    local searchIcon = Instance.new("TextLabel")
+    searchIcon.Size = UDim2.new(0, 24, 1, 0)
+    searchIcon.Position = UDim2.new(0, 4, 0, 0)
+    searchIcon.BackgroundTransparency = 1
+    searchIcon.Text = "🔍"
+    searchIcon.TextSize = 12
+    searchIcon.Font = Enum.Font.Gotham
+    searchIcon.Parent = searchWrap
+
+    local searchBox = Instance.new("TextBox")
+    searchBox.Size = UDim2.new(1, -32, 1, 0)
+    searchBox.Position = UDim2.new(0, 28, 0, 0)
+    searchBox.BackgroundTransparency = 1
+    searchBox.PlaceholderText = "Search section or Func..."
+    searchBox.PlaceholderColor3 = Color3.fromRGB(150, 150, 160)
+    searchBox.Text = ""
+    searchBox.TextColor3 = Color3.fromRGB(255, 255, 255)
+    searchBox.TextSize = 11
+    searchBox.Font = Enum.Font.GothamMedium
+    searchBox.TextXAlignment = Enum.TextXAlignment.Left
+    searchBox.ClearTextOnFocus = false
+    searchBox.Parent = searchWrap
+
+    searchBox:GetPropertyChangedSignal("Text"):Connect(function()
+        local q = string.lower(searchBox.Text)
+        for name, data in pairs(tabs) do
+            data.Button.Visible = (q == "") or (string.find(string.lower(name), q, 1, true) ~= nil)
+        end
+    end)
+end
+
+local function createToggleFeature(parentPage, featureId, title, subTitle, layoutOrder, defaultState, callback)
+    local hasSub = subTitle ~= nil and subTitle ~= ""
+    local card = Instance.new("Frame")
+    card.Size = UDim2.new(1, 0, 0, hasSub and 50 or 36)
+    card.BackgroundColor3 = BANANA_CARD
+    card.LayoutOrder = layoutOrder
+    card.Parent = parentPage
+    addCorner(card, 8)
+    local cardStroke = addStroke(card, defaultState and BANANA_YELLOW or BANANA_CARD_BORDER, 1)
+    cardStroke.Transparency = defaultState and 0.5 or 0.35
+
+    local mainText = Instance.new("TextLabel")
+    mainText.Size = UDim2.new(1, -60, 0, hasSub and 20 or 36)
+    mainText.Position = UDim2.new(0, 12, 0, hasSub and 6 or 0)
+    mainText.BackgroundTransparency = 1
+    mainText.Text = title
+    mainText.TextColor3 = defaultState and Color3.fromRGB(255, 255, 255) or Color3.fromRGB(205, 205, 212)
+    mainText.TextSize = 12
+    mainText.Font = Enum.Font.GothamMedium
+    mainText.TextXAlignment = Enum.TextXAlignment.Left
+    mainText.Parent = card
+
+    if hasSub then
+        local subText = Instance.new("TextLabel")
+        subText.Size = UDim2.new(1, -60, 0, 16)
+        subText.Position = UDim2.new(0, 12, 0, 28)
+        subText.BackgroundTransparency = 1
+        subText.Text = subTitle
+        subText.TextColor3 = Color3.fromRGB(140, 140, 156)
+        subText.TextSize = 10
+        subText.Font = Enum.Font.Gotham
+        subText.TextXAlignment = Enum.TextXAlignment.Left
+        subText.Parent = card
+    end
+
+    local checkBox = Instance.new("Frame")
+    checkBox.Size = UDim2.new(0, 20, 0, 20)
+    checkBox.Position = UDim2.new(1, -32, 0.5, -10)
+    checkBox.BackgroundColor3 = BANANA_SIDEBAR
+    checkBox.Parent = card
+    addCorner(checkBox, 5)
+    addStroke(checkBox, BANANA_YELLOW, 2)
+
+    local checkFill = Instance.new("Frame")
+    checkFill.AnchorPoint = Vector2.new(0.5, 0.5)
+    checkFill.Position = UDim2.new(0.5, 0, 0.5, 0)
+    checkFill.Size = defaultState and UDim2.new(0, 12, 0, 12) or UDim2.new(0, 0, 0, 0)
+    checkFill.BackgroundColor3 = BANANA_YELLOW
+    checkFill.Parent = checkBox
+    addCorner(checkFill, 3)
+
+    local isToggled = defaultState
+    local function setToggleState(state)
+        isToggled = state
+        TweenService:Create(checkFill, TweenInfo.new(0.16, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
+            {Size = isToggled and UDim2.new(0, 12, 0, 12) or UDim2.new(0, 0, 0, 0)}):Play()
+        TweenService:Create(cardStroke, TweenInfo.new(0.16), {
+            Color = isToggled and BANANA_YELLOW or BANANA_CARD_BORDER,
+            Transparency = isToggled and 0.5 or 0.35,
+        }):Play()
+        TweenService:Create(mainText, TweenInfo.new(0.16), {
+            TextColor3 = isToggled and Color3.fromRGB(255, 255, 255) or Color3.fromRGB(205, 205, 212),
+        }):Play()
+    end
+
+    local clickArea = Instance.new("TextButton")
+    clickArea.Size = UDim2.new(1, 0, 1, 0)
+    clickArea.BackgroundTransparency = 1
+    clickArea.Text = ""
+    clickArea.Parent = card
+
+    clickArea.MouseEnter:Connect(function()
+        TweenService:Create(card, TweenInfo.new(0.12), {BackgroundColor3 = Color3.fromRGB(48, 48, 55)}):Play()
+    end)
+    clickArea.MouseLeave:Connect(function()
+        TweenService:Create(card, TweenInfo.new(0.12), {BackgroundColor3 = BANANA_CARD}):Play()
+    end)
+
+    clickArea.MouseButton1Click:Connect(function()
+        isToggled = not isToggled
+        setToggleState(isToggled)
+        callback(isToggled)
+    end)
+
+    if featureId then
+        toggleUpdateFuncs[featureId] = setToggleState
+    end
+end
+
+-- TRẠNG THÁI CAKE PRINCE
+local cakeStatusCard = Instance.new("Frame")
+cakeStatusCard.Size = UDim2.new(1, 0, 0, 44)
+cakeStatusCard.BackgroundColor3 = BANANA_CARD
+cakeStatusCard.LayoutOrder = 0
+cakeStatusCard.Parent = farmPage
+addCorner(cakeStatusCard, 8)
+addStroke(cakeStatusCard, Color3.fromRGB(255, 170, 0), 1.2)
+
+local cakeStatusText = Instance.new("TextLabel")
+cakeStatusText.Size = UDim2.new(1, -24, 1, 0)
+cakeStatusText.Position = UDim2.new(0, 12, 0, 0)
+cakeStatusText.BackgroundTransparency = 1
+cakeStatusText.Text = "🎂 Trạng thái Cake Prince: Đang kiểm tra..."
+cakeStatusText.TextColor3 = Color3.fromRGB(255, 215, 0)
+cakeStatusText.TextSize = 12
+cakeStatusText.Font = Enum.Font.GothamBold
+cakeStatusText.TextXAlignment = Enum.TextXAlignment.Left
+cakeStatusText.Parent = cakeStatusCard
+
+local isCakePrinceReady = false
+
+task.spawn(function()
+    while true do
+        task.wait(4)
+        pcall(function()
+            local remotes = ReplicatedStorage:FindFirstChild("Remotes")
+            local commF = remotes and remotes:FindFirstChild("CommF_")
+            if commF then
+                local result = commF:InvokeServer("CakePrinceSpawner")
+                if type(result) == "string" then
+                    local remainingNum = string.match(result, "(%d+)")
+                    if remainingNum then
+                        cakeStatusText.Text = "🎂 Cake Prince còn lại: " .. remainingNum .. " / 500 con"
+                        isCakePrinceReady = false
+                    elseif string.find(string.lower(result), "open") or string.find(string.lower(result), "dimension") or string.find(string.lower(result), "portal") or tonumber(remainingNum) == 0 then
+                        cakeStatusText.Text = "👑 Cake Prince / Dough King Đã Mở Cổng!"
+                        isCakePrinceReady = true
+                    else
+                        cakeStatusText.Text = "🎂 " .. result
+                    end
+                end
+            end
+        end)
+    end
+end)
+
+-- TAB AUTO FARM CONTENT
+local farmDropdownCard = Instance.new("Frame")
+farmDropdownCard.Size = UDim2.new(1, 0, 0, 44)
+farmDropdownCard.BackgroundColor3 = BANANA_CARD
+farmDropdownCard.LayoutOrder = 1
+farmDropdownCard.ClipsDescendants = true
+farmDropdownCard.Parent = farmPage
+addCorner(farmDropdownCard, 8)
+addStroke(farmDropdownCard, BANANA_CARD_BORDER, 1.2)
+
+local farmDropdownBtn = Instance.new("TextButton")
+farmDropdownBtn.Size = UDim2.new(1, 0, 0, 44)
+farmDropdownBtn.BackgroundTransparency = 1
+farmDropdownBtn.Text = ""
+farmDropdownBtn.Parent = farmDropdownCard
+
+local farmDropdownLabel = Instance.new("TextLabel")
+farmDropdownLabel.Size = UDim2.new(1, -45, 1, 0)
+farmDropdownLabel.Position = UDim2.new(0, 12, 0, 0)
+farmDropdownLabel.BackgroundTransparency = 1
+farmDropdownLabel.Text = "Target: " .. selectedFarmTarget
+farmDropdownLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+farmDropdownLabel.TextSize = 12
+farmDropdownLabel.Font = Enum.Font.GothamBold
+farmDropdownLabel.TextXAlignment = Enum.TextXAlignment.Left
+farmDropdownLabel.Parent = farmDropdownBtn
+
+local farmArrow = Instance.new("TextLabel")
+farmArrow.Size = UDim2.new(0, 35, 1, 0)
+farmArrow.Position = UDim2.new(1, -35, 0, 0)
+farmArrow.BackgroundTransparency = 1
+farmArrow.Text = "▼"
+farmArrow.TextColor3 = BANANA_YELLOW
+farmArrow.TextSize = 12
+farmArrow.Font = Enum.Font.GothamBold
+farmArrow.Parent = farmDropdownBtn
+
+local farmOptionsList = Instance.new("Frame")
+farmOptionsList.Size = UDim2.new(1, -20, 0, 105)
+farmOptionsList.Position = UDim2.new(0, 10, 0, 44)
+farmOptionsList.BackgroundTransparency = 1
+farmOptionsList.Parent = farmDropdownCard
+
+local farmListLayout = Instance.new("UIListLayout")
+farmListLayout.Parent = farmOptionsList
+farmListLayout.SortOrder = Enum.SortOrder.LayoutOrder
+farmListLayout.Padding = UDim.new(0, 6)
+
+local isFarmDropdownOpen = false
+farmDropdownBtn.MouseButton1Click:Connect(function()
+    isFarmDropdownOpen = not isFarmDropdownOpen
+    farmArrow.Text = isFarmDropdownOpen and "▲" or "▼"
+    farmDropdownCard.Size = isFarmDropdownOpen and UDim2.new(1, 0, 0, 155) or UDim2.new(1, 0, 0, 44)
+end)
+
+local farmOptionBtns = {}
+for index, targetName in ipairs({"Auto Level", "Cake Prince", "Bones"}) do
+    local optBtn = Instance.new("TextButton")
+    optBtn.Size = UDim2.new(1, 0, 0, 30)
+    optBtn.Text = "   " .. targetName
+    optBtn.TextXAlignment = Enum.TextXAlignment.Left
+    optBtn.Font = Enum.Font.GothamBold
+    optBtn.TextSize = 12
+    optBtn.LayoutOrder = index
+    optBtn.Parent = farmOptionsList
+    addCorner(optBtn, 6)
+
+    if targetName == selectedFarmTarget then
+        optBtn.BackgroundColor3 = BANANA_YELLOW
+        optBtn.TextColor3 = BANANA_TEXT_ON
+    else
+        optBtn.BackgroundColor3 = Color3.fromRGB(18, 18, 22)
+        optBtn.TextColor3 = Color3.fromRGB(150, 150, 160)
+    end
+
+    optBtn.MouseButton1Click:Connect(function()
+        selectedFarmTarget = targetName
+        farmDropdownLabel.Text = "Target: " .. selectedFarmTarget
+        isFarmDropdownOpen = false
+        farmArrow.Text = "▼"
+        farmDropdownCard.Size = UDim2.new(1, 0, 0, 44)
+
+        for name, btn in pairs(farmOptionBtns) do
+            if name == selectedFarmTarget then
+                btn.BackgroundColor3 = BANANA_YELLOW
+                btn.TextColor3 = BANANA_TEXT_ON
+            else
+                btn.BackgroundColor3 = Color3.fromRGB(18, 18, 22)
+                btn.TextColor3 = Color3.fromRGB(150, 150, 160)
+            end
+        end
+    end)
+    farmOptionBtns[targetName] = optBtn
+end
+
+createToggleFeature(farmPage, "AutoFarmTargetToggle", "Auto Farm Target", "Tự động farm mục tiêu đã chọn", 2, autoFarmEnabled, function(state)
+    autoFarmEnabled = state
+    if state then
+        if toggleUpdateFuncs["AutoFarmMaterialToggle"] then toggleUpdateFuncs["AutoFarmMaterialToggle"](false) end
+        if toggleUpdateFuncs["AutoFarmBossToggle"] then toggleUpdateFuncs["AutoFarmBossToggle"](false) end
+        if toggleUpdateFuncs["AutoRaidToggle"] then toggleUpdateFuncs["AutoRaidToggle"](false) end
+    end
+end)
+
+createToggleFeature(farmPage, "AutoQuestToggle", "Auto Quest", "Tự động nhận nhiệm vụ chuẩn theo cấp độ (Gồm cả Đảo Xương)", 3, autoQuestEnabled, function(state)
+    autoQuestEnabled = state
+end)
+
+-- UI & COMPONENT CHỨC NĂNG AUTO FARM MATERIAL
+local materialDropdownCard = Instance.new("Frame")
+materialDropdownCard.Size = UDim2.new(1, 0, 0, 44)
+materialDropdownCard.BackgroundColor3 = BANANA_CARD
+materialDropdownCard.LayoutOrder = 4
+materialDropdownCard.ClipsDescendants = true
+materialDropdownCard.Parent = farmPage
+addCorner(materialDropdownCard, 8)
+addStroke(materialDropdownCard, BANANA_CARD_BORDER, 1.2)
+
+local materialDropdownBtn = Instance.new("TextButton")
+materialDropdownBtn.Size = UDim2.new(1, 0, 0, 44)
+materialDropdownBtn.BackgroundTransparency = 1
+materialDropdownBtn.Text = ""
+materialDropdownBtn.Parent = materialDropdownCard
+
+local materialDropdownLabel = Instance.new("TextLabel")
+materialDropdownLabel.Size = UDim2.new(1, -45, 1, 0)
+materialDropdownLabel.Position = UDim2.new(0, 12, 0, 0)
+materialDropdownLabel.BackgroundTransparency = 1
+materialDropdownLabel.Text = "📦 Material: " .. selectedMaterialTarget
+materialDropdownLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+materialDropdownLabel.TextSize = 12
+materialDropdownLabel.Font = Enum.Font.GothamBold
+materialDropdownLabel.TextXAlignment = Enum.TextXAlignment.Left
+materialDropdownLabel.Parent = materialDropdownBtn
+
+local materialArrow = Instance.new("TextLabel")
+materialArrow.Size = UDim2.new(0, 35, 1, 0)
+materialArrow.Position = UDim2.new(1, -35, 0, 0)
+materialArrow.BackgroundTransparency = 1
+materialArrow.Text = "▼"
+materialArrow.TextColor3 = BANANA_YELLOW
+materialArrow.TextSize = 12
+materialArrow.Font = Enum.Font.GothamBold
+materialArrow.Parent = materialDropdownBtn
+
+local materialOptionsList = Instance.new("ScrollingFrame")
+materialOptionsList.Size = UDim2.new(1, -20, 0, 140)
+materialOptionsList.Position = UDim2.new(0, 10, 0, 44)
+materialOptionsList.BackgroundTransparency = 1
+materialOptionsList.BorderSizePixel = 0
+materialOptionsList.ScrollBarThickness = 3
+materialOptionsList.ScrollBarImageColor3 = BANANA_YELLOW
+materialOptionsList.Parent = materialDropdownCard
+
+local materialListLayout = Instance.new("UIListLayout")
+materialListLayout.Parent = materialOptionsList
+materialListLayout.SortOrder = Enum.SortOrder.LayoutOrder
+materialListLayout.Padding = UDim.new(0, 6)
+
+local isMaterialDropdownOpen = false
+materialDropdownBtn.MouseButton1Click:Connect(function()
+    isMaterialDropdownOpen = not isMaterialDropdownOpen
+    materialArrow.Text = isMaterialDropdownOpen and "▲" or "▼"
+    materialDropdownCard.Size = isMaterialDropdownOpen and UDim2.new(1, 0, 0, 195) or UDim2.new(1, 0, 0, 44)
+end)
+
+local materialOptionBtns = {}
+local materialListNames = {
+    "Scrap Metal & Leather", 
+    "Angel Wing", 
+    "Fish Tail", 
+    "Magma Ore", 
+    "Vampire Fang", 
+    "Radioactive Material", 
+    "Mystic Droplet", 
+    "Dragon Scale", 
+    "Conjured Cocoa", 
+    "Mini Tusk", 
+    "Demonic Soul"
+}
+
+for index, matName in ipairs(materialListNames) do
+    local optBtn = Instance.new("TextButton")
+    optBtn.Size = UDim2.new(1, -6, 0, 30)
+    optBtn.Text = "   " .. matName
+    optBtn.TextXAlignment = Enum.TextXAlignment.Left
+    optBtn.Font = Enum.Font.GothamBold
+    optBtn.TextSize = 12
+    optBtn.LayoutOrder = index
+    optBtn.Parent = materialOptionsList
+    addCorner(optBtn, 6)
+
+    if matName == selectedMaterialTarget then
+        optBtn.BackgroundColor3 = BANANA_YELLOW
+        optBtn.TextColor3 = BANANA_TEXT_ON
+    else
+        optBtn.BackgroundColor3 = Color3.fromRGB(18, 18, 22)
+        optBtn.TextColor3 = Color3.fromRGB(150, 150, 160)
+    end
+
+    optBtn.MouseButton1Click:Connect(function()
+        selectedMaterialTarget = matName
+        currentMatPointIndex = 1
+        materialDropdownLabel.Text = "📦 Material: " .. selectedMaterialTarget
+        isMaterialDropdownOpen = false
+        materialArrow.Text = "▼"
+        materialDropdownCard.Size = UDim2.new(1, 0, 0, 44)
+
+        for name, btn in pairs(materialOptionBtns) do
+            if name == selectedMaterialTarget then
+                btn.BackgroundColor3 = BANANA_YELLOW
+                btn.TextColor3 = BANANA_TEXT_ON
+            else
+                btn.BackgroundColor3 = Color3.fromRGB(18, 18, 22)
+                btn.TextColor3 = Color3.fromRGB(150, 150, 160)
+            end
+        end
+    end)
+    materialOptionBtns[matName] = optBtn
+end
+materialOptionsList.CanvasSize = UDim2.new(0, 0, 0, #materialListNames * 36)
+
+createToggleFeature(farmPage, "AutoFarmMaterialToggle", "Auto Farm Material", "Bay đến và diệt quái rớt nguyên liệu chọn", 5, autoFarmMaterialEnabled, function(state)
+    autoFarmMaterialEnabled = state
+    if state then
+        currentMatPointIndex = 1
+        if toggleUpdateFuncs["AutoFarmTargetToggle"] then toggleUpdateFuncs["AutoFarmTargetToggle"](false) end
+        if toggleUpdateFuncs["AutoFarmBossToggle"] then toggleUpdateFuncs["AutoFarmBossToggle"](false) end
+        if toggleUpdateFuncs["AutoRaidToggle"] then toggleUpdateFuncs["AutoRaidToggle"](false) end
+        autoFarmEnabled = false
+    end
+end)
+
+-- TAB BOSS CONTENT
+local bossDropdownCard = Instance.new("Frame")
+bossDropdownCard.Size = UDim2.new(1, 0, 0, 44)
+bossDropdownCard.BackgroundColor3 = BANANA_CARD
+bossDropdownCard.LayoutOrder = 1
+bossDropdownCard.ClipsDescendants = true
+bossDropdownCard.Parent = bossPage
+addCorner(bossDropdownCard, 8)
+addStroke(bossDropdownCard, BANANA_CARD_BORDER, 1.2)
+
+local bossDropdownBtn = Instance.new("TextButton")
+bossDropdownBtn.Size = UDim2.new(1, 0, 0, 44)
+bossDropdownBtn.BackgroundTransparency = 1
+bossDropdownBtn.Text = ""
+bossDropdownBtn.Parent = bossDropdownCard
+
+local bossDropdownLabel = Instance.new("TextLabel")
+bossDropdownLabel.Size = UDim2.new(1, -45, 1, 0)
+bossDropdownLabel.Position = UDim2.new(0, 12, 0, 0)
+bossDropdownLabel.BackgroundTransparency = 1
+bossDropdownLabel.Text = "👑 Boss: " .. selectedBossTarget
+bossDropdownLabel.TextColor3 = Color3.fromRGB(255, 215, 0)
+bossDropdownLabel.TextSize = 12
+bossDropdownLabel.Font = Enum.Font.GothamBold
+bossDropdownLabel.TextXAlignment = Enum.TextXAlignment.Left
+bossDropdownLabel.Parent = bossDropdownBtn
+
+local bossArrow = Instance.new("TextLabel")
+bossArrow.Size = UDim2.new(0, 35, 1, 0)
+bossArrow.Position = UDim2.new(1, -35, 0, 0)
+bossArrow.BackgroundTransparency = 1
+bossArrow.Text = "▼"
+bossArrow.TextColor3 = BANANA_YELLOW
+bossArrow.TextSize = 12
+bossArrow.Font = Enum.Font.GothamBold
+bossArrow.Parent = bossDropdownBtn
+
+local bossListScroll = Instance.new("ScrollingFrame")
+bossListScroll.Size = UDim2.new(1, -20, 0, 180)
+bossListScroll.Position = UDim2.new(0, 10, 0, 44)
+bossListScroll.BackgroundTransparency = 1
+bossListScroll.BorderSizePixel = 0
+bossListScroll.ScrollBarThickness = 3
+bossListScroll.ScrollBarImageColor3 = BANANA_YELLOW
+bossListScroll.Parent = bossDropdownCard
+
+local bossListLayout = Instance.new("UIListLayout")
+bossListLayout.Parent = bossListScroll
+bossListLayout.SortOrder = Enum.SortOrder.LayoutOrder
+bossListLayout.Padding = UDim.new(0, 5)
+
+local isBossDropdownOpen = false
+bossDropdownBtn.MouseButton1Click:Connect(function()
+    isBossDropdownOpen = not isBossDropdownOpen
+    bossArrow.Text = isBossDropdownOpen and "▲" or "▼"
+    bossDropdownCard.Size = isBossDropdownOpen and UDim2.new(1, 0, 0, 230) or UDim2.new(1, 0, 0, 44)
+end)
+
+local bossBtns = {}
+local function renderBossList()
+    for _, child in pairs(bossListScroll:GetChildren()) do
+        if child:IsA("TextButton") or child:IsA("TextLabel") then child:Destroy() end
+    end
+    bossBtns = {}
+    local currentLayoutOrder = 1
+    for seaName, bosses in pairs(seaBosses) do
+        local seaLabel = Instance.new("TextLabel")
+        seaLabel.Size = UDim2.new(1, 0, 0, 22)
+        seaLabel.BackgroundTransparency = 1
+        seaLabel.Text = "  📌 " .. seaName
+        seaLabel.TextColor3 = BANANA_YELLOW
+        seaLabel.Font = Enum.Font.GothamBold
+        seaLabel.TextSize = 11
+        seaLabel.TextXAlignment = Enum.TextXAlignment.Left
+        seaLabel.LayoutOrder = currentLayoutOrder
+        seaLabel.Parent = bossListScroll
+        currentLayoutOrder = currentLayoutOrder + 1
+
+        for _, bName in ipairs(bosses) do
+            local bBtn = Instance.new("TextButton")
+            bBtn.Size = UDim2.new(1, -6, 0, 28)
+            bBtn.Text = "     " .. bName
+            bBtn.TextXAlignment = Enum.TextXAlignment.Left
+            bBtn.Font = Enum.Font.Gotham
+            bBtn.TextSize = 11
+            bBtn.LayoutOrder = currentLayoutOrder
+            bBtn.Parent = bossListScroll
+            currentLayoutOrder = currentLayoutOrder + 1
+            addCorner(bBtn, 6)
+
+            if bName == selectedBossTarget then
+                bBtn.BackgroundColor3 = BANANA_YELLOW
+                bBtn.TextColor3 = BANANA_TEXT_ON
+            else
+                bBtn.BackgroundColor3 = Color3.fromRGB(18, 18, 22)
+                bBtn.TextColor3 = Color3.fromRGB(160, 160, 170)
+            end
+
+            bBtn.MouseButton1Click:Connect(function()
+                selectedBossTarget = bName
+                bossDropdownLabel.Text = "👑 Boss: " .. selectedBossTarget
+                isBossDropdownOpen = false
+                bossArrow.Text = "▼"
+                bossDropdownCard.Size = UDim2.new(1, 0, 0, 44)
+
+                for name, btn in pairs(bossBtns) do
+                    if name == selectedBossTarget then
+                        btn.BackgroundColor3 = BANANA_YELLOW
+                        btn.TextColor3 = BANANA_TEXT_ON
+                    else
+                        btn.BackgroundColor3 = Color3.fromRGB(18, 18, 22)
+                        btn.TextColor3 = Color3.fromRGB(160, 160, 170)
+                    end
+                end
+            end)
+            bossBtns[bName] = bBtn
+        end
+    end
+    bossListScroll.CanvasSize = UDim2.new(0, 0, 0, currentLayoutOrder * 32)
+end
+renderBossList()
+
+createToggleFeature(bossPage, "AutoFarmBossToggle", "Auto Fly & Farm Boss", "Tự động bay đến vị trí & hạ gục Boss đã chọn", 2, false, function(state)
+    if state then
+        selectedFarmTarget = "Farm Boss"
+        if toggleUpdateFuncs["AutoFarmTargetToggle"] then toggleUpdateFuncs["AutoFarmTargetToggle"](false) end
+        if toggleUpdateFuncs["AutoFarmMaterialToggle"] then toggleUpdateFuncs["AutoFarmMaterialToggle"](false) end
+        if toggleUpdateFuncs["AutoRaidToggle"] then toggleUpdateFuncs["AutoRaidToggle"](false) end
+        autoFarmEnabled = true
+    else
+        autoFarmEnabled = false
+    end
+end)
+
+-- TAB RAID CONTENT
+local raidFrame = Instance.new("Frame")
+raidFrame.Size = UDim2.new(1, 0, 0, 180)
+raidFrame.BackgroundColor3 = BANANA_CARD
+raidFrame.LayoutOrder = 1
+raidFrame.Parent = raidPage
+addCorner(raidFrame, 8)
+addStroke(raidFrame, BANANA_CARD_BORDER, 1.2)
+
+local raidTitle = Instance.new("TextLabel")
+raidTitle.Size = UDim2.new(1, -24, 0, 32)
+raidTitle.Position = UDim2.new(0, 12, 0, 4)
+raidTitle.BackgroundTransparency = 1
+raidTitle.Text = "🔥 Select Raid Chip: " .. selectedRaidChip
+raidTitle.TextColor3 = Color3.fromRGB(255, 120, 0)
+raidTitle.TextSize = 12
+raidTitle.Font = Enum.Font.GothamBold
+raidTitle.TextXAlignment = Enum.TextXAlignment.Left
+raidTitle.Parent = raidFrame
+
+local raidListScroll = Instance.new("ScrollingFrame")
+raidListScroll.Size = UDim2.new(1, -20, 0, 134)
+raidListScroll.Position = UDim2.new(0, 10, 0, 36)
+raidListScroll.BackgroundTransparency = 1
+raidListScroll.BorderSizePixel = 0
+raidListScroll.ScrollBarThickness = 3
+raidListScroll.ScrollBarImageColor3 = BANANA_YELLOW
+raidListScroll.Parent = raidFrame
+
+local raidListLayout = Instance.new("UIListLayout")
+raidListLayout.Parent = raidListScroll
+raidListLayout.SortOrder = Enum.SortOrder.LayoutOrder
+raidListLayout.Padding = UDim.new(0, 5)
+
+local chipBtns = {}
+for idx, chipName in ipairs(raidChipsList) do
+    local cBtn = Instance.new("TextButton")
+    cBtn.Size = UDim2.new(1, -6, 0, 28)
+    cBtn.Text = "     " .. chipName .. " Chip"
+    cBtn.TextXAlignment = Enum.TextXAlignment.Left
+    cBtn.Font = Enum.Font.Gotham
+    cBtn.TextSize = 11
+    cBtn.LayoutOrder = idx
+    cBtn.Parent = raidListScroll
+    addCorner(cBtn, 6)
+
+    if chipName == selectedRaidChip then
+        cBtn.BackgroundColor3 = BANANA_YELLOW
+        cBtn.TextColor3 = BANANA_TEXT_ON
+    else
+        cBtn.BackgroundColor3 = Color3.fromRGB(18, 18, 22)
+        cBtn.TextColor3 = Color3.fromRGB(160, 160, 170)
+    end
+
+    cBtn.MouseButton1Click:Connect(function()
+        selectedRaidChip = chipName
+        _G.SelectChip = chipName
+        raidTitle.Text = "🔥 Select Raid Chip: " .. selectedRaidChip
+        for name, btn in pairs(chipBtns) do
+            if name == selectedRaidChip then
+                btn.BackgroundColor3 = BANANA_YELLOW
+                btn.TextColor3 = BANANA_TEXT_ON
+            else
+                btn.BackgroundColor3 = Color3.fromRGB(18, 18, 22)
+                btn.TextColor3 = Color3.fromRGB(160, 160, 170)
+            end
+        end
+    end)
+    chipBtns[chipName] = cBtn
+end
+raidListScroll.CanvasSize = UDim2.new(0, 0, 0, #raidChipsList * 32)
+
+createToggleFeature(raidPage, "AutoBuyChipToggle", "Auto Buy Chip", "Tự động mua Chip Raid đã chọn", 2, autoBuyChipEnabled, function(state)
+    autoBuyChipEnabled = state
+    _G.AutoBuyChip = state
+end)
+
+createToggleFeature(raidPage, "AutoStartRaidToggle", "Auto Start Raid", "Tự động nhấn nút bắt đầu phòng Raid", 3, autoStartRaidEnabled, function(state)
+    autoStartRaidEnabled = state
+    _G.StartRaid = state
+end)
+
+createToggleFeature(raidPage, "AutoRaidToggle", "Auto Farm Raid (Fly)", "Tự động bay diệt quái & bay qua các đảo Raid", 4, autoRaidEnabled, function(state)
+    autoRaidEnabled = state
+    _G.Dungeon = state
+    if state then
+        if toggleUpdateFuncs["AutoFarmTargetToggle"] then toggleUpdateFuncs["AutoFarmTargetToggle"](false) end
+        if toggleUpdateFuncs["AutoFarmMaterialToggle"] then toggleUpdateFuncs["AutoFarmMaterialToggle"](false) end
+        if toggleUpdateFuncs["AutoFarmBossToggle"] then toggleUpdateFuncs["AutoFarmBossToggle"](false) end
+        autoFarmEnabled = false
+        autoFarmMaterialEnabled = false
+    end
+end)
+
+if World2 then
+    createToggleFeature(raidPage, "AutoLawRaidToggle", "Auto Farm Law Raid (Sea 2)", "Tự động đánh Boss Order (Law)", 5, _G.AutoLawRaid, function(state)
+        _G.AutoLawRaid = state
+    end)
+end
+
+-- =========================================================
+--   RAID: AUTO BUY CHIP / AUTO START RAID / AUTO FARM RAID
+--   Hỗ trợ Sea 2 + Sea 3 (BẢN FIX)
+-- =========================================================
+-- ĐÃ FIX:
+-- 1) Mua chip: gửi đúng TÊN CHIP server yêu cầu
+--    (Spider -> String, Buddha -> Human: Buddha, Phoenix -> Bird: Phoenix).
+--    Bỏ lệnh "Check" thừa, không mua thêm chip khi Raid đang chạy.
+-- 2) Start Raid: vòng lặp Farm Raid không còn huỷ chuyến bay của Auto Start Raid.
+--    Sea 3: requestEntrance (nếu đang ở xa) -> bay tới Boat Castle -> áp sát nút
+--    -> click RaidSummon2. Giữ nhân vật lơ lửng khi chờ/click (không rơi xuyên map).
+-- 3) Farm Raid: tự trang bị vũ khí (_G.EquipWeapon), bay tới quái gần nhất,
+--    xoay vòng các đảo khi chưa có quái. Mọi vòng lặp có pcall để không chết thread.
+local RAID_FIXED = {
+    debug = true,
+    buyCooldown = 4,
+    startCooldown = 4,
+    arrivalDistance = 7,
+    detectorWaitTimeout = 10,
+    clickRetries = 4,
+    islandHeight = 60,
+    lockHeight = 45,
+    session = 0,
+    running = false,
+    starting = false,
+    buying = false,
+    flying = false,
+    flightToken = 0,
+    nextBuyAt = 0,
+    nextStartAt = 0,
+    currentIsland = 0,
+    lastStatus = "Idle",
+    flightTween = nil,
+    lockConnection = nil,
+    lockEnemy = nil,
+    noclipConnection = nil,
+    noclipEnabled = false,
+    holdConnection = nil,
+    holdCF = nil,
+}
+
+do
+-- Tên hiển thị trong menu -> tên chip server nhận (thử lần lượt)
+local RAID_CHIP_SERVER_NAMES = {
+    ["Flame"]   = {"Flame"},
+    ["Ice"]     = {"Ice"},
+    ["Quake"]   = {"Quake"},
+    ["Light"]   = {"Light"},
+    ["Dark"]    = {"Dark"},
+    ["Spider"]  = {"String", "Spider"},
+    ["Rumble"]  = {"Rumble"},
+    ["Magma"]   = {"Magma"},
+    ["Buddha"]  = {"Human: Buddha", "Buddha"},
+    ["Sand"]    = {"Sand"},
+    ["Dough"]   = {"Dough"},
+    ["Phoenix"] = {"Bird: Phoenix", "Phoenix"},
+}
+
+local function raidFarmEnabled()
+    return (autoRaidEnabled or _G.Dungeon) and true or false
+end
+
+-- Start Raid được phép chạy độc lập hoặc cùng với Auto Farm Raid.
+local function raidStartEnabled()
+    return (autoStartRaidEnabled or _G.StartRaid or autoRaidEnabled or _G.Dungeon) and true or false
+end
+
+local function raidLog(...)
+    if RAID_FIXED.debug then
+        print("[RaidFix]", ...)
+    end
+end
+
+local function getPlayerRoot()
+    local char = LocalPlayer.Character
+    return char and char:FindFirstChild("HumanoidRootPart")
+end
+
+local function getCommF()
+    local remotes = ReplicatedStorage:FindFirstChild("Remotes")
+    return remotes and remotes:FindFirstChild("CommF_")
+end
+
+-- RAID NOCLIP: chỉ áp dụng trong lúc Raid/Start Raid đang điều khiển nhân vật.
+local function setRaidNoclip(state)
+    RAID_FIXED.noclipEnabled = state == true
+
+    if state then
+        if RAID_FIXED.noclipConnection then return end
+
+        RAID_FIXED.noclipConnection = RunService.Stepped:Connect(function()
+            if not RAID_FIXED.noclipEnabled then return end
+
+            local character = LocalPlayer.Character
+            if not character then return end
+
+            -- Chống rơi xuyên map khi noclip (huỷ trọng lực bằng BodyVelocity = 0)
+            local root0 = character:FindFirstChild("HumanoidRootPart")
+            if root0 and not root0:FindFirstChild("BananaAntiFall") then
+                local bv = Instance.new("BodyVelocity")
+                bv.Name = "BananaAntiFall"
+                bv.Velocity = Vector3.zero
+                bv.MaxForce = Vector3.new(1e6, 1e6, 1e6)
+                bv.Parent = root0
+            end
+
+            for _, part in ipairs(character:GetDescendants()) do
+                if part:IsA("BasePart") then
+                    part.CanCollide = false
+                end
+            end
+        end)
+    else
+        pcall(function()
+            local root0 = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+            local bv = root0 and root0:FindFirstChild("BananaAntiFall")
+            if bv then bv:Destroy() end
+        end)
+        if RAID_FIXED.noclipConnection then
+            pcall(function()
+                RAID_FIXED.noclipConnection:Disconnect()
+            end)
+            RAID_FIXED.noclipConnection = nil
+        end
+    end
+end
+
+local function restoreCharacterCollision()
+    local character = LocalPlayer.Character
+    if not character then return end
+
+    for _, part in ipairs(character:GetDescendants()) do
+        if part:IsA("BasePart") then
+            if part.Name == "HumanoidRootPart" or part.CanCollide == false then
+                pcall(function() part.CanCollide = true end)
+            end
+        end
+    end
+end
+
+-- GIỮ NHÂN VẬT LƠ LỬNG tại 1 điểm (noclip bật nên nếu không giữ sẽ rơi xuyên map)
+local function setRaidHold(cf)
+    RAID_FIXED.holdCF = cf
+
+    if cf then
+        if RAID_FIXED.holdConnection then return end
+        RAID_FIXED.holdConnection = RunService.Heartbeat:Connect(function()
+            local c = RAID_FIXED.holdCF
+            local hrp = getPlayerRoot()
+            if c and hrp then
+                hrp.CFrame = c
+                hrp.AssemblyLinearVelocity = Vector3.zero
+                hrp.AssemblyAngularVelocity = Vector3.zero
+            end
+        end)
+    else
+        if RAID_FIXED.holdConnection then
+            pcall(function()
+                RAID_FIXED.holdConnection:Disconnect()
+            end)
+            RAID_FIXED.holdConnection = nil
+        end
+    end
+end
+
+-- Có Special Microchip trong Backpack / đang cầm trên tay
+local function hasSpecialMicrochip()
+    local function scan(container)
+        if not container then return false end
+        if container:FindFirstChild("Special Microchip") then return true end
+        for _, tool in ipairs(container:GetChildren()) do
+            if tool:IsA("Tool") and string.find(string.lower(tool.Name), "microchip", 1, true) then
+                return true
+            end
+        end
+        return false
+    end
+    return scan(LocalPlayer:FindFirstChild("Backpack")) or scan(LocalPlayer.Character)
+end
+
+local function getRaidTimer()
+    local pg = LocalPlayer:FindFirstChild("PlayerGui")
+    local main = pg and pg:FindFirstChild("Main")
+    return main and main:FindFirstChild("Timer")
+end
+
+local function getRaidLocations()
+    local worldOrigin = workspace:FindFirstChild("_WorldOrigin")
+    return worldOrigin and worldOrigin:FindFirstChild("Locations")
+end
+
+local function getRaidIsland(index)
+    local locations = getRaidLocations()
+    if not locations then return nil end
+    return locations:FindFirstChild("Island " .. tostring(index))
+end
+
+-- Raid đang chạy khi Timer hiện hoặc đã có Island 1.
+local function isRaidActive()
+    local ok, active = pcall(function()
+        local timer = getRaidTimer()
+        if timer and timer.Visible then
+            return true
+        end
+        local locations = getRaidLocations()
+        return locations ~= nil and locations:FindFirstChild("Island 1") ~= nil
+    end)
+    return ok and active == true
+end
+
+local function getPivotPosition(obj)
+    if not obj then return nil end
+    local ok, cf = pcall(function()
+        if obj:IsA("BasePart") then
+            return obj.CFrame
+        end
+        return obj:GetPivot()
+    end)
+    return ok and cf or nil
+end
+
+local function cancelRaidFlight()
+    RAID_FIXED.flightToken += 1
+    RAID_FIXED.flying = false
+
+    if RAID_FIXED.flightTween then
+        pcall(function()
+            RAID_FIXED.flightTween:Cancel()
+        end)
+        RAID_FIXED.flightTween = nil
+    end
+
+    local hrp = getPlayerRoot()
+    if hrp then
+        hrp.AssemblyLinearVelocity = Vector3.zero
+        hrp.AssemblyAngularVelocity = Vector3.zero
+    end
+end
+
+-- Bay một chuyến duy nhất tới mục tiêu. Trả về true nếu tới nơi.
+local function raidFlyTo(targetCFrame, speed, keepGoing)
+    local hrp = getPlayerRoot()
+    if not hrp then return false end
+
+    -- Raid flight dùng cùng tốc độ Farm (đọc flySpeed tại thời điểm bay).
+    local spd = math.max(60, tonumber(speed or flySpeed or 190) or 190)
+
+    setRaidNoclip(true)
+    setRaidHold(nil) -- thôi giữ vị trí cũ để không tranh quyền với Tween
+
+    if RAID_FIXED.flightTween then
+        pcall(function()
+            RAID_FIXED.flightTween:Cancel()
+        end)
+        RAID_FIXED.flightTween = nil
+    end
+
+    RAID_FIXED.flightToken += 1
+    local myToken = RAID_FIXED.flightToken
+    RAID_FIXED.flying = true
+
+    local distance = (hrp.Position - targetCFrame.Position).Magnitude
+    if distance <= RAID_FIXED.arrivalDistance then
+        hrp.CFrame = targetCFrame
+        hrp.AssemblyLinearVelocity = Vector3.zero
+        hrp.AssemblyAngularVelocity = Vector3.zero
+        RAID_FIXED.flying = false
+        return true
+    end
+
+    local duration = math.max(0.12, distance / spd)
+    local deadline = tick() + duration + 3
+
+    local tween = TweenService:Create(
+        hrp,
+        TweenInfo.new(duration, Enum.EasingStyle.Linear, Enum.EasingDirection.Out),
+        {CFrame = targetCFrame}
+    )
+    RAID_FIXED.flightTween = tween
+    tween:Play()
+
+    while myToken == RAID_FIXED.flightToken and tick() < deadline do
+        if keepGoing and not keepGoing() then
+            break
+        end
+
+        if not hrp.Parent then
+            break
+        end
+
+        hrp.AssemblyLinearVelocity = Vector3.zero
+        hrp.AssemblyAngularVelocity = Vector3.zero
+
+        local st = tween.PlaybackState
+        if st == Enum.PlaybackState.Completed or st == Enum.PlaybackState.Cancelled then
+            break
+        end
+
+        RunService.Heartbeat:Wait()
+    end
+
+    local currentRoot = getPlayerRoot()
+    local reached = currentRoot ~= nil
+        and (tween.PlaybackState == Enum.PlaybackState.Completed
+            or (currentRoot.Position - targetCFrame.Position).Magnitude <= 12)
+
+    if tween.PlaybackState == Enum.PlaybackState.Playing then
+        pcall(function()
+            tween:Cancel()
+        end)
+    end
+
+    if myToken == RAID_FIXED.flightToken then
+        currentRoot = getPlayerRoot()
+
+        if currentRoot and reached then
+            currentRoot.CFrame = targetCFrame
+            currentRoot.AssemblyLinearVelocity = Vector3.zero
+            currentRoot.AssemblyAngularVelocity = Vector3.zero
+        end
+
+        RAID_FIXED.flightTween = nil
+        RAID_FIXED.flying = false
+    else
+        return false
+    end
+
+    return reached == true
+end
+
+local function getRaidRoomTarget()
+    if World2 then
+        return CFrame.new(-6438.73535, 250.645355, -4501.50684)
+    elseif World3 then
+        return CFrame.new(
+            -5017.40869, 314.844055, -2823.0127,
+            -0.925743818, 4.48217499e-08, -0.378151238,
+             4.55503146e-09, 1, 1.07377559e-07,
+             0.378151238, 9.7681621e-08, -0.925743818
+        )
+    end
+    return nil
+end
+
+local function findRaidSummonDetector()
+    local map = workspace:FindFirstChild("Map")
+    if not map then return nil end
+
+    local summon
+    if World2 then
+        local circleIsland = map:FindFirstChild("CircleIsland")
+        summon = circleIsland and circleIsland:FindFirstChild("RaidSummon2")
+    elseif World3 then
+        local boatCastle = map:FindFirstChild("Boat Castle")
+        summon = boatCastle and boatCastle:FindFirstChild("RaidSummon2")
+    end
+
+    local button = summon and summon:FindFirstChild("Button")
+    local main = button and button:FindFirstChild("Main")
+    local detector = main and main:FindFirstChildOfClass("ClickDetector")
+    if detector then return detector end
+
+    -- Fallback nếu cấu trúc map đổi nhẹ: tìm trong đúng khu vực Raid trước.
+    local scope = (World3 and map:FindFirstChild("Boat Castle")) or (World2 and map:FindFirstChild("CircleIsland")) or map
+    for _, obj in ipairs(scope:GetDescendants()) do
+        if obj:IsA("ClickDetector") then
+            local mainPart = obj.Parent
+            if mainPart and mainPart.Name == "Main" then
+                local buttonPart = mainPart.Parent
+                local summonPart = buttonPart and buttonPart.Parent
+                if summonPart and summonPart.Name == "RaidSummon2" then
+                    return obj
+                end
+            end
+        end
+    end
+
+    return nil
+end
+
+local function prepareRaidRoom()
+    local commF = getCommF()
+    local target = getRaidRoomTarget()
+    if not commF or not target then
+        return false, "Không xác định được phòng Raid"
+    end
+
+    local hrp = getPlayerRoot()
+    if not hrp then
+        return false, "Chưa có nhân vật"
+    end
+
+    setRaidNoclip(true)
+
+    -- Tắt tween/farm chung đang chạy để không tranh quyền điều khiển HRP.
+    cancelFarmTween()
+    if currentRaidTween then
+        pcall(function() currentRaidTween:Cancel() end)
+        currentRaidTween = nil
+    end
+
+    -- Sea 3: dịch chuyển nhanh vào khu Boat Castle nếu đang ở xa.
+    if World3 and (hrp.Position - target.Position).Magnitude > 600 then
+        RAID_FIXED.lastStatus = "Sea 3: requestEntrance..."
+        pcall(function()
+            commF:InvokeServer("requestEntrance", Vector3.new(-5075.50927734375, 314.5155029296875, -3150.0224609375))
+        end)
+        task.wait(0.6)
+    end
+
+    RAID_FIXED.lastStatus = "Đang bay tới phòng Raid"
+    local ok = raidFlyTo(target, flySpeed, raidStartEnabled)
+    if not ok then
+        return false, "Bay tới phòng Raid bị gián đoạn"
+    end
+
+    -- Giữ nhân vật đứng yên trong lúc chờ nút / click.
+    setRaidHold(target)
+
+    -- Đặt spawn point sau khi đã tới phòng.
+    pcall(function()
+        commF:InvokeServer("SetSpawnPoint")
+    end)
+
+    task.wait(0.35)
+    return true, "Đã tới phòng Raid"
+end
+
+-- Mua chip: gửi đúng tên chip server nhận, chờ chip vào Backpack.
+local function buySelectedRaidChip()
+    if not (World2 or World3) then
+        return false, "Raid chỉ hỗ trợ Sea 2/Sea 3"
+    end
+    if hasSpecialMicrochip() then
+        return true, "Đã có Special Microchip"
+    end
+    if isRaidActive() then
+        return false, "Raid đang chạy"
+    end
+    if RAID_FIXED.buying then
+        return false, "Đang mua chip..."
+    end
+    if tick() < RAID_FIXED.nextBuyAt then
+        return false, "Đang chờ cooldown mua chip"
+    end
+
+    local commF = getCommF()
+    if not commF then
+        return false, "Không tìm thấy Remotes.CommF_"
+    end
+
+    RAID_FIXED.buying = true
+    RAID_FIXED.nextBuyAt = tick() + RAID_FIXED.buyCooldown
+
+    local selected = selectedRaidChip or _G.SelectChip or "Flame"
+    local serverNames = RAID_CHIP_SERVER_NAMES[selected] or {selected}
+
+    local gotChip = false
+    for _, serverName in ipairs(serverNames) do
+        RAID_FIXED.lastStatus = "Đang mua " .. tostring(selected) .. " Chip"
+
+        local okSelect, resultSelect = pcall(function()
+            return commF:InvokeServer("RaidsNpc", "Select", serverName)
+        end)
+        raidLog("RaidsNpc Select", serverName, okSelect, resultSelect)
+
+        local deadline = tick() + 2.5
+        repeat
+            task.wait(0.1)
+        until hasSpecialMicrochip() or tick() >= deadline
+
+        if hasSpecialMicrochip() then
+            gotChip = true
+            break
+        end
+    end
+
+    RAID_FIXED.buying = false
+
+    if gotChip then
+        RAID_FIXED.lastStatus = "Đã nhận Special Microchip"
+        return true, "Đã nhận Special Microchip"
+    end
+
+    return false, "Chưa nhận được Special Microchip (kiểm tra Beli/Fragments)"
+end
+
+-- Nhả quyền điều khiển nếu không còn chế độ Farm Raid.
+local function releaseRaidControl()
+    if not raidFarmEnabled() then
+        setRaidHold(nil)
+        setRaidNoclip(false)
+        restoreCharacterCollision()
+    end
+end
+
+local function clickRaidSummon()
+    if not (World2 or World3) then
+        return false, "Không ở Sea 2/Sea 3"
+    end
+
+    if isRaidActive() then
+        return true, "Raid đang chạy"
+    end
+
+    if not hasSpecialMicrochip() then
+        return false, "Chưa có Special Microchip"
+    end
+
+    if not raidStartEnabled() then
+        return false, "Auto Start Raid đang tắt"
+    end
+
+    if RAID_FIXED.starting then
+        return false, "Đang Start Raid..."
+    end
+
+    if tick() < RAID_FIXED.nextStartAt then
+        return false, "Đang chờ cooldown Start Raid"
+    end
+
+    if typeof(fireclickdetector) ~= "function" then
+        return false, "Executor không hỗ trợ fireclickdetector"
+    end
+
+    RAID_FIXED.starting = true
+    RAID_FIXED.nextStartAt = tick() + RAID_FIXED.startCooldown
+    local mySession = RAID_FIXED.session
+
+    local function sessionOk()
+        return mySession == RAID_FIXED.session
+    end
+
+    local function doStart()
+        local roomOk, roomMsg = prepareRaidRoom()
+        if not roomOk then
+            return false, roomMsg
+        end
+
+        local detector
+        local detectorDeadline = tick() + RAID_FIXED.detectorWaitTimeout
+        repeat
+            if not sessionOk() then return false, "Nhân vật đã hồi sinh" end
+            detector = findRaidSummonDetector()
+            if detector or isRaidActive() or not raidStartEnabled() then break end
+            task.wait(0.5)
+        until tick() >= detectorDeadline
+
+        if isRaidActive() then
+            RAID_FIXED.lastStatus = "Raid đã bắt đầu"
+            return true, "Raid đang chạy"
+        end
+
+        if not raidStartEnabled() then
+            return false, "Đã tắt Start Raid"
+        end
+
+        if not detector then
+            return false, "Không tìm thấy RaidSummon2"
+        end
+
+        -- Áp sát nút để nằm trong tầm ClickDetector.
+        local buttonPart = detector.Parent
+        if buttonPart and buttonPart:IsA("BasePart") then
+            local root = getPlayerRoot()
+            if root and (root.Position - buttonPart.Position).Magnitude > 12 then
+                local nearCF = CFrame.new(buttonPart.Position + Vector3.new(0, 4, 0))
+                if raidFlyTo(nearCF, flySpeed, raidStartEnabled) then
+                    setRaidHold(nearCF)
+                end
+            end
+        end
+
+        for attempt = 1, RAID_FIXED.clickRetries do
+            if not sessionOk() then return false, "Nhân vật đã hồi sinh" end
+            if not raidStartEnabled() then return false, "Đã tắt Start Raid" end
+
+            RAID_FIXED.lastStatus = "Start Raid lần " .. tostring(attempt)
+
+            local ok, err = pcall(function()
+                if attempt % 2 == 0 then
+                    fireclickdetector(detector, 0)
+                else
+                    fireclickdetector(detector)
+                end
+            end)
+
+            if not ok then
+                raidLog("fireclickdetector lỗi:", err)
+            else
+                local verifyDeadline = tick() + 3
+                while tick() < verifyDeadline do
+                    if isRaidActive() then
+                        RAID_FIXED.lastStatus = "Raid đã bắt đầu - " .. (World3 and "Sea 3" or "Sea 2")
+                        raidLog("Start Raid thành công:", World3 and "Sea 3" or "Sea 2")
+                        return true, "Raid đã bắt đầu"
+                    end
+                    task.wait(0.2)
+                end
+            end
+
+            if attempt < RAID_FIXED.clickRetries then
+                detector = findRaidSummonDetector() or detector
+                task.wait(0.35)
+            end
+        end
+
+        return false, "Đã click nhưng server chưa tạo Raid"
+    end
+
+    local okCall, ok, msg = pcall(doStart)
+    RAID_FIXED.starting = false
+
+    if not okCall then
+        msg = "Lỗi Start Raid: " .. tostring(ok)
+        ok = false
+        raidLog(msg)
+    end
+
+    releaseRaidControl()
+    return ok, msg
+end
+
+local function enemyAlive(enemy)
+    if not enemy or not enemy.Parent then return false end
+    local hum = enemy:FindFirstChildOfClass("Humanoid")
+    return hum ~= nil and hum.Health > 0
+end
+
+-- Đảo Raid có số cao nhất đang tồn tại (Raid đi từ đảo 1 -> 5, không bao giờ quay lại đảo cũ).
+local function getHighestRaidIsland()
+    for i = 8, 1, -1 do
+        local cf = getPivotPosition(getRaidIsland(i))
+        if cf then return i, cf end
+    end
+    return nil, nil
+end
+
+-- Quái Raid gần người chơi nhất.
+-- islandIdx != nil: CHỈ lấy quái quanh đảo đó (bán kính 650) -> không bị kéo về đảo cũ.
+-- islandIdx == nil: lấy quái ở mọi đảo (chỉ dùng để dọn quái sót khi đảo hiện tại trống lâu).
+local function getRaidEnemy(islandIdx)
+    local enemiesFolder = workspace:FindFirstChild("Enemies")
+    local hrp = getPlayerRoot()
+    if not enemiesFolder or not hrp then return nil end
+
+    local anchors = {}
+    local radius = 900
+    if islandIdx then
+        local cf = getPivotPosition(getRaidIsland(islandIdx))
+        if cf then
+            anchors[1] = cf.Position
+            radius = 650
+        end
+    else
+        for i = 1, 8 do
+            local cf = getPivotPosition(getRaidIsland(i))
+            if cf then
+                anchors[#anchors + 1] = cf.Position
+            end
+        end
+    end
+
+    local best, bestDist = nil, math.huge
+    for _, enemy in ipairs(enemiesFolder:GetChildren()) do
+        local enemyHrp = enemy:FindFirstChild("HumanoidRootPart")
+        local hum = enemy:FindFirstChildOfClass("Humanoid")
+        if enemyHrp and hum and hum.Health > 0 then
+            local inArea = false
+            if #anchors == 0 then
+                inArea = (enemyHrp.Position - hrp.Position).Magnitude <= 300
+            else
+                for _, pos in ipairs(anchors) do
+                    if (enemyHrp.Position - pos).Magnitude <= radius then
+                        inArea = true
+                        break
+                    end
+                end
+            end
+
+            if inArea then
+                local distPlayer = (enemyHrp.Position - hrp.Position).Magnitude
+                if distPlayer < bestDist then
+                    bestDist = distPlayer
+                    best = enemy
+                end
+            end
+        end
+    end
+    return best
+end
+
+local function stopRaidPositionLock()
+    if RAID_FIXED.lockConnection then
+        pcall(function()
+            RAID_FIXED.lockConnection:Disconnect()
+        end)
+        RAID_FIXED.lockConnection = nil
+    end
+    RAID_FIXED.lockEnemy = nil
+
+    local hrp = getPlayerRoot()
+    if hrp then
+        hrp.AssemblyLinearVelocity = Vector3.zero
+        hrp.AssemblyAngularVelocity = Vector3.zero
+    end
+end
+
+local function startRaidPositionLock(enemy)
+    RAID_FIXED.lockEnemy = enemy
+    setRaidHold(nil)
+
+    if RAID_FIXED.lockConnection then
+        return
+    end
+
+    RAID_FIXED.lockConnection = RunService.Heartbeat:Connect(function()
+        local lockedEnemy = RAID_FIXED.lockEnemy
+
+        if not (autoRaidEnabled or _G.Dungeon)
+            or not isRaidActive()
+            or not lockedEnemy
+            or not lockedEnemy.Parent
+        then
+            return
+        end
+
+        local currentHrp = getPlayerRoot()
+        local liveEnemyHrp = lockedEnemy:FindFirstChild("HumanoidRootPart")
+        local hum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+
+        if not currentHrp or not liveEnemyHrp then
+            return
+        end
+
+        if hum then
+            hum.AutoRotate = false
+        end
+
+        local livePos = liveEnemyHrp.Position + Vector3.new(0, RAID_FIXED.lockHeight, 0)
+
+        -- FIX: bản cũ dùng CFrame.lookAt(livePos, horizontalTarget) nhưng 2 điểm này TRÙNG NHAU
+        -- (đứng ngay trên đầu quái) -> CFrame bị NaN -> nhân vật rơi/chết -> reset liên tục.
+        -- Giờ chỉ xoay theo hướng quái, không dùng lookAt nữa.
+        local _, yaw, _ = liveEnemyHrp.CFrame:ToOrientation()
+        local newCF = CFrame.new(livePos) * CFrame.fromOrientation(0, yaw, 0)
+        if newCF.Position ~= newCF.Position then return end -- chặn NaN
+        currentHrp.CFrame = newCF
+        currentHrp.AssemblyLinearVelocity = Vector3.zero
+        currentHrp.AssemblyAngularVelocity = Vector3.zero
+    end)
+end
+
+local function farmRaidIslands()
+    if not raidFarmEnabled() or not isRaidActive() then return false end
+
+    local mySession = RAID_FIXED.session
+    local function alive()
+        return mySession == RAID_FIXED.session and raidFarmEnabled() and isRaidActive()
+    end
+
+    RAID_FIXED.running = true
+    setRaidNoclip(true)
+    stopRaidPositionLock()
+    setRaidHold(nil)
+
+    local raidHumanoid = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+    local oldAutoRotate = raidHumanoid and raidHumanoid.AutoRotate
+    if raidHumanoid then
+        raidHumanoid.AutoRotate = false
+    end
+
+    local lastEquip, lastEnemySeen, heldIsland = 0, tick(), 0
+    local curIsland = 0       -- đảo đang đánh (chỉ tăng, không bao giờ giảm)
+    local clearedSince = nil  -- thời điểm đảo hiện tại hết quái
+
+    -- Đảo nhỏ nhất đang tồn tại
+    local function lowestIsland()
+        for i = 1, 8 do
+            if getPivotPosition(getRaidIsland(i)) then return i end
+        end
+        return nil
+    end
+
+    -- Đảo kế tiếp đang tồn tại (> curIsland)
+    local function nextIsland(from)
+        for i = from + 1, 8 do
+            if getPivotPosition(getRaidIsland(i)) then return i end
+        end
+        return nil
+    end
+
+    while alive() do
+        -- Trang bị vũ khí
+        if tick() - lastEquip >= 0.6 then
+            lastEquip = tick()
+            pcall(function()
+                if type(_G.EquipWeapon) == "function" then
+                    _G.EquipWeapon()
+                end
+            end)
+        end
+
+        -- Khởi tạo / đồng bộ đảo hiện tại (vd hồi sinh giữa chừng đang đứng gần đảo 3)
+        if curIsland == 0 or not getPivotPosition(getRaidIsland(curIsland)) then
+            curIsland = lowestIsland() or 0
+        end
+        do
+            local myRoot = getPlayerRoot()
+            if myRoot then
+                for i = 8, curIsland + 1, -1 do
+                    local cf = getPivotPosition(getRaidIsland(i))
+                    if cf and (cf.Position - myRoot.Position).Magnitude <= 450 then
+                        curIsland = i
+                        break
+                    end
+                end
+            end
+        end
+
+        local enemy = curIsland > 0 and getRaidEnemy(curIsland) or nil
+        -- Đảo hiện tại trống > 25s và không có đảo kế -> dọn quái sót ở đảo khác
+        if not enemy and clearedSince and tick() - clearedSince > 25 and not nextIsland(curIsland) then
+            enemy = getRaidEnemy(nil)
+        end
+
+        if enemy and enemy:FindFirstChild("HumanoidRootPart") then
+            lastEnemySeen = tick()
+            clearedSince = nil
+            heldIsland = 0
+            targetEnemy = enemy
+
+            local enemyHrp = enemy.HumanoidRootPart
+            local currentHrp = getPlayerRoot()
+
+            if currentHrp then
+                local targetPos = enemyHrp.Position + Vector3.new(0, RAID_FIXED.lockHeight, 0)
+                local dist = (currentHrp.Position - targetPos).Magnitude
+
+                if dist > 90 then
+                    stopRaidPositionLock()
+                    RAID_FIXED.lastStatus = "Bay tới quái Raid (đảo " .. tostring(curIsland) .. ")"
+                    raidFlyTo(CFrame.new(targetPos), flySpeed, function()
+                        return alive() and enemyAlive(enemy)
+                    end)
+                else
+                    RAID_FIXED.lastStatus = "Đang diệt quái Raid (đảo " .. tostring(curIsland) .. ")"
+                    startRaidPositionLock(enemy)
+                end
+            end
+        else
+            targetEnemy = nil
+            stopRaidPositionLock()
+            clearedSince = clearedSince or tick()
+
+            -- Hết quái đảo hiện tại: chờ 1.5s cho chắc rồi BAY SANG ĐẢO KẾ TIẾP (N+1)
+            local nxt = (tick() - clearedSince >= 1.5) and nextIsland(curIsland) or nil
+            if nxt then
+                curIsland = nxt
+                heldIsland = 0
+                clearedSince = nil
+                RAID_FIXED.lastStatus = "Chuyển sang đảo Raid " .. tostring(curIsland)
+            end
+
+            local cf = curIsland > 0 and getPivotPosition(getRaidIsland(curIsland)) or nil
+            if cf then
+                local dest = CFrame.new(cf.Position + Vector3.new(0, RAID_FIXED.islandHeight, 0))
+                if heldIsland ~= curIsland then
+                    RAID_FIXED.currentIsland = curIsland
+                    if raidFlyTo(dest, flySpeed, alive) then
+                        heldIsland = curIsland
+                        setRaidHold(dest)
+                    end
+                else
+                    RAID_FIXED.lastStatus = "Chờ quái đảo Raid " .. tostring(curIsland)
+                end
+            else
+                RAID_FIXED.lastStatus = "Đang chờ đảo Raid xuất hiện"
+            end
+
+            task.wait(0.2)
+        end
+
+        task.wait(0.05)
+    end
+
+    stopRaidPositionLock()
+    setRaidHold(nil)
+    targetEnemy = nil
+
+    raidHumanoid = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+    if raidHumanoid and oldAutoRotate ~= nil then
+        raidHumanoid.AutoRotate = oldAutoRotate
+    end
+
+    if mySession == RAID_FIXED.session then
+        setRaidNoclip(false)
+        restoreCharacterCollision()
+        RAID_FIXED.currentIsland = 0
+        RAID_FIXED.running = false
+        RAID_FIXED.lastStatus = isRaidActive() and "Đang chờ Raid kết thúc" or "Raid kết thúc"
+    end
+    return true
+end
+
+-- Auto Buy Chip: chỉ mua khi chưa có chip và Raid không chạy, tránh spam remote.
+task.spawn(function()
+    while task.wait(0.5) do
+        pcall(function()
+            if (autoBuyChipEnabled or _G.AutoBuyChip) and (World2 or World3) then
+                if not hasSpecialMicrochip() and not isRaidActive() and not RAID_FIXED.starting then
+                    local ok, msg = buySelectedRaidChip()
+                    if ok then
+                        raidLog(msg)
+                    elseif msg and msg ~= "Đang chờ cooldown mua chip" and msg ~= "Đang mua chip..." then
+                        RAID_FIXED.lastStatus = msg
+                    end
+                end
+            end
+        end)
+    end
+end)
+
+-- BỘ ĐIỀU KHIỂN RAID DUY NHẤT: Auto Start Raid + Auto Farm Raid.
+-- (Bản cũ có 2 vòng lặp chồng nhau, vòng Farm huỷ luôn chuyến bay của Auto Start.)
+task.spawn(function()
+    while task.wait(0.35) do
+        pcall(function()
+            local farmOn  = raidFarmEnabled()
+            local startOn = raidStartEnabled()
+
+            if startOn and (World2 or World3) then
+                if not isRaidActive() then
+                    if not RAID_FIXED.starting and not RAID_FIXED.running then
+                        if hasSpecialMicrochip() then
+                            local ok, msg = clickRaidSummon()
+                            if not ok and msg then
+                                RAID_FIXED.lastStatus = msg
+                            end
+                        elseif not (autoBuyChipEnabled or _G.AutoBuyChip) then
+                            RAID_FIXED.lastStatus = "Chưa có Special Microchip (bật Auto Buy Chip)"
+                        end
+                    end
+                elseif farmOn and not RAID_FIXED.running then
+                    task.spawn(function()
+                        local ok, err = pcall(farmRaidIslands)
+                        if not ok then
+                            RAID_FIXED.running = false
+                            RAID_FIXED.lastStatus = "Raid lỗi: " .. tostring(err)
+                            raidLog("farmRaidIslands error:", err)
+                        end
+                    end)
+                end
+            elseif not startOn then
+                if RAID_FIXED.running or RAID_FIXED.starting or RAID_FIXED.holdCF or RAID_FIXED.noclipEnabled or RAID_FIXED.flying then
+                    RAID_FIXED.session += 1 -- huỷ mọi tiến trình Raid đang chạy
+                    RAID_FIXED.running = false
+                    RAID_FIXED.starting = false
+                    stopRaidPositionLock()
+                    setRaidHold(nil)
+                    cancelRaidFlight()
+                    setRaidNoclip(false)
+                    restoreCharacterCollision()
+                end
+            end
+        end)
+    end
+end)
+
+LocalPlayer.CharacterAdded:Connect(function()
+    task.wait(0.2)
+    RAID_FIXED.session += 1 -- huỷ tiến trình Raid của nhân vật cũ
+    stopRaidPositionLock()
+    setRaidHold(nil)
+    cancelRaidFlight()
+    setRaidNoclip(false)
+    RAID_FIXED.running = false
+    RAID_FIXED.currentIsland = 0
+end)
+end
+
+-- Nút trạng thái nhỏ trong tab Raid.
+do
+    local raidStatus = Instance.new("TextLabel")
+    raidStatus.Name = "RaidStatus"
+    raidStatus.Size = UDim2.new(1, -24, 0, 22)
+    raidStatus.Position = UDim2.new(0, 12, 0, 151)
+    raidStatus.BackgroundTransparency = 1
+    raidStatus.Text = "⚡ " .. RAID_FIXED.lastStatus
+    raidStatus.TextColor3 = Color3.fromRGB(190, 190, 200)
+    raidStatus.TextSize = 10
+    raidStatus.Font = Enum.Font.Gotham
+    raidStatus.TextXAlignment = Enum.TextXAlignment.Left
+    raidStatus.Parent = raidFrame
+
+    task.spawn(function()
+        while raidStatus.Parent do
+            raidStatus.Text = "⚡ " .. tostring(RAID_FIXED.lastStatus)
+            task.wait(0.5)
+        end
+    end)
+end
+
+-- AUTO FARM CHEST (tab Farm)
+createToggleFeature(farmPage, "AutoFarmChestToggle", "Auto Farm Chest", "Bay nhặt rương Beli/Bạc/Vàng gần nhất (tự tắt các chế độ farm khác)", 6, autoChestEnabled, function(state)
+    autoChestEnabled = state
+    if state then
+        -- tắt các chế độ farm khác để không tranh nhau điều khiển nhân vật
+        if toggleUpdateFuncs["AutoFarmTargetToggle"] then toggleUpdateFuncs["AutoFarmTargetToggle"](false) end
+        if toggleUpdateFuncs["AutoFarmMaterialToggle"] then toggleUpdateFuncs["AutoFarmMaterialToggle"](false) end
+        if toggleUpdateFuncs["AutoFarmBossToggle"] then toggleUpdateFuncs["AutoFarmBossToggle"](false) end
+        if toggleUpdateFuncs["AutoRaidToggle"] then toggleUpdateFuncs["AutoRaidToggle"](false) end
+        autoFarmEnabled = false
+        autoFarmMaterialEnabled = false
+        autoRaidEnabled = false
+        _G.Dungeon = false
+        _G.AutoLawRaid = false
+    else
+        stopAllFlying() -- tắt là đứng yên ngay, không bay tiếp tới rương
+    end
+end)
+
+-- TAB GACHA CONTENT
+createToggleFeature(gachaPage, "AutoRandomBonesToggle", "Auto Random Bones (Death King)", "Tự động dùng 50 Bones đổi quà ngẫu nhiên tại Death King", 1, autoRandomBonesEnabled, function(state)
+    autoRandomBonesEnabled = state
+end)
+
+createToggleFeature(gachaPage, "AutoStoreFruitToggle", "Auto Store Fruit", "Tự động cất tất cả Trái Ác Quỷ trong kho đồ (Backpack) vào rương", 2, autoStoreFruitEnabled, function(state)
+    autoStoreFruitEnabled = state
+end)
+
+createToggleFeature(gachaPage, "AutoRandomFruitToggle", "Auto Random Fruit", "Mua từ xa (không cần bay tới NPC), game giới hạn 2 giờ/lần - nên bật kèm Auto Store Fruit", 3, autoRandomFruitEnabled, function(state)
+    autoRandomFruitEnabled = state
+end)
+
+-- KHUNG HIỂN THỊ DANH SÁCH TRÁI ÁC QUỶ ĐANG BÁN TRONG SHOP
+local stockFrame = Instance.new("Frame")
+stockFrame.Size = UDim2.new(1, 0, 0, 230)
+stockFrame.BackgroundColor3 = BANANA_CARD
+stockFrame.LayoutOrder = 1
+stockFrame.Parent = shopPage
+addCorner(stockFrame, 8)
+addStroke(stockFrame, BANANA_CARD_BORDER, 1.2)
+
+local stockTitle = Instance.new("TextLabel")
+stockTitle.Size = UDim2.new(1, -200, 0, 30)
+stockTitle.Position = UDim2.new(0, 12, 0, 4)
+stockTitle.BackgroundTransparency = 1
+stockTitle.Text = "🍎 Stock: Shop Thường"
+stockTitle.TextColor3 = Color3.fromRGB(255, 215, 0)
+stockTitle.TextSize = 12
+stockTitle.Font = Enum.Font.GothamBold
+stockTitle.TextXAlignment = Enum.TextXAlignment.Left
+stockTitle.Parent = stockFrame
+
+local currentShopMode = false 
+
+local btnNormalStock = Instance.new("TextButton")
+btnNormalStock.Size = UDim2.new(0, 85, 0, 24)
+btnNormalStock.Position = UDim2.new(1, -180, 0, 6)
+btnNormalStock.BackgroundColor3 = BANANA_YELLOW
+btnNormalStock.Text = "🍎 Shop Thường"
+btnNormalStock.TextColor3 = BANANA_TEXT_ON
+btnNormalStock.Font = Enum.Font.GothamBold
+btnNormalStock.TextSize = 10
+btnNormalStock.Parent = stockFrame
+addCorner(btnNormalStock, 6)
+
+local btnMirageStock = Instance.new("TextButton")
+btnMirageStock.Size = UDim2.new(0, 90, 0, 24)
+btnMirageStock.Position = UDim2.new(1, -90, 0, 6)
+btnMirageStock.BackgroundColor3 = Color3.fromRGB(35, 35, 45)
+btnMirageStock.Text = "🏝 Đảo Bí Ẩn"
+btnMirageStock.TextColor3 = Color3.fromRGB(200, 200, 200)
+btnMirageStock.Font = Enum.Font.GothamBold
+btnMirageStock.TextSize = 10
+btnMirageStock.Parent = stockFrame
+addCorner(btnMirageStock, 6)
+
+local stockScroll = Instance.new("ScrollingFrame")
+stockScroll.Size = UDim2.new(1, -20, 0, 180)
+stockScroll.Position = UDim2.new(0, 10, 0, 38)
+stockScroll.BackgroundTransparency = 1
+stockScroll.BorderSizePixel = 0
+stockScroll.ScrollBarThickness = 3
+stockScroll.ScrollBarImageColor3 = BANANA_YELLOW
+stockScroll.Parent = stockFrame
+
+local stockListLayout = Instance.new("UIListLayout")
+stockListLayout.Parent = stockScroll
+stockListLayout.SortOrder = Enum.SortOrder.LayoutOrder
+stockListLayout.Padding = UDim.new(0, 4)
+
+local function updateFruitStock(isMirage)
+    currentShopMode = isMirage
+    if isMirage then
+        stockTitle.Text = "🏝️ Stock: Đảo Bí Ẩn (Mirage)"
+        btnMirageStock.BackgroundColor3 = BANANA_YELLOW
+        btnMirageStock.TextColor3 = BANANA_TEXT_ON
+        btnNormalStock.BackgroundColor3 = Color3.fromRGB(35, 35, 45)
+        btnNormalStock.TextColor3 = Color3.fromRGB(200, 200, 200)
+    else
+        stockTitle.Text = "🍎 Stock: Shop Thường"
+        btnNormalStock.BackgroundColor3 = BANANA_YELLOW
+        btnNormalStock.TextColor3 = BANANA_TEXT_ON
+        btnMirageStock.BackgroundColor3 = Color3.fromRGB(35, 35, 45)
+        btnMirageStock.TextColor3 = Color3.fromRGB(200, 200, 200)
+    end
+
+    for _, child in pairs(stockScroll:GetChildren()) do
+        if child:IsA("Frame") or child:IsA("TextLabel") then 
+            child:Destroy() 
+        end
+    end
+
+    pcall(function()
+        local commF = ReplicatedStorage:FindFirstChild("Remotes") and ReplicatedStorage.Remotes:FindFirstChild("CommF_")
+        if not commF then return end
+
+        local fruitsData = isMirage and commF:InvokeServer("GetFruits", true) or commF:InvokeServer("GetFruits")
+        if type(fruitsData) == "table" then
+            local count = 0
+            for _, fruit in pairs(fruitsData) do
+                if fruit.OnSale then
+                    count = count + 1
+                    local itemFrame = Instance.new("Frame")
+                    itemFrame.Size = UDim2.new(1, -6, 0, 28)
+                    itemFrame.BackgroundColor3 = Color3.fromRGB(18, 18, 22)
+                    itemFrame.LayoutOrder = count
+                    itemFrame.Parent = stockScroll
+                    addCorner(itemFrame, 5)
+
+                    local nameLabel = Instance.new("TextLabel")
+                    nameLabel.Size = UDim2.new(0.6, 0, 1, 0)
+                    nameLabel.Position = UDim2.new(0, 8, 0, 0)
+                    nameLabel.BackgroundTransparency = 1
+                    nameLabel.Text = "• " .. tostring(fruit.Name or "Unknown")
+                    nameLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+                    nameLabel.Font = Enum.Font.GothamBold
+                    nameLabel.TextSize = 11
+                    nameLabel.TextXAlignment = Enum.TextXAlignment.Left
+                    nameLabel.Parent = itemFrame
+
+                    local priceLabel = Instance.new("TextLabel")
+                    priceLabel.Size = UDim2.new(0.4, -8, 1, 0)
+                    priceLabel.Position = UDim2.new(0.6, 0, 0, 0)
+                    priceLabel.BackgroundTransparency = 1
+                    
+                    local priceText = fruit.Price and ("$" .. string.format("%d", fruit.Price)) or "N/A"
+                    priceLabel.Text = priceText
+                    priceLabel.TextColor3 = Color3.fromRGB(85, 255, 127)
+                    priceLabel.Font = Enum.Font.GothamBold
+                    priceLabel.TextSize = 11
+                    priceLabel.TextXAlignment = Enum.TextXAlignment.Right
+                    priceLabel.Parent = itemFrame
+                end
+            end
+            
+            if count == 0 then
+                local emptyLabel = Instance.new("TextLabel")
+                emptyLabel.Size = UDim2.new(1, 0, 0, 30)
+                emptyLabel.BackgroundTransparency = 1
+                emptyLabel.Text = isMirage and "Không tìm thấy dữ liệu stock Đảo Bí Ẩn!" or "Không lấy được dữ liệu shop!"
+                emptyLabel.TextColor3 = Color3.fromRGB(200, 150, 150)
+                emptyLabel.Font = Enum.Font.Gotham
+                emptyLabel.TextSize = 11
+                emptyLabel.Parent = stockScroll
+            end
+
+            stockScroll.CanvasSize = UDim2.new(0, 0, 0, count * 32)
+        end
+    end)
+end
+
+btnNormalStock.MouseButton1Click:Connect(function()
+    updateFruitStock(false)
+end)
+
+btnMirageStock.MouseButton1Click:Connect(function()
+    updateFruitStock(true)
+end)
+
+task.spawn(function()
+    task.wait(1)
+    updateFruitStock(false)
+end)
+
+-- TAB SETTINGS & CONFIG
+local weaponDropdownCard = Instance.new("Frame")
+weaponDropdownCard.Size = UDim2.new(1, 0, 0, 44)
+weaponDropdownCard.BackgroundColor3 = BANANA_CARD
+weaponDropdownCard.LayoutOrder = 1
+weaponDropdownCard.ClipsDescendants = true
+weaponDropdownCard.Parent = settingsPage
+addCorner(weaponDropdownCard, 8)
+addStroke(weaponDropdownCard, BANANA_CARD_BORDER, 1.2)
+
+local weaponDropdownBtn = Instance.new("TextButton")
+weaponDropdownBtn.Size = UDim2.new(1, 0, 0, 44)
+weaponDropdownBtn.BackgroundTransparency = 1
+weaponDropdownBtn.Text = ""
+weaponDropdownBtn.Parent = weaponDropdownCard
+
+local weaponDropdownLabel = Instance.new("TextLabel")
+weaponDropdownLabel.Size = UDim2.new(1, -45, 1, 0)
+weaponDropdownLabel.Position = UDim2.new(0, 12, 0, 0)
+weaponDropdownLabel.BackgroundTransparency = 1
+weaponDropdownLabel.Text = "Weapon: " .. selectedWeapon
+weaponDropdownLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+weaponDropdownLabel.TextSize = 12
+weaponDropdownLabel.Font = Enum.Font.GothamBold
+weaponDropdownLabel.TextXAlignment = Enum.TextXAlignment.Left
+weaponDropdownLabel.Parent = weaponDropdownBtn
+
+local weaponArrow = Instance.new("TextLabel")
+weaponArrow.Size = UDim2.new(0, 35, 1, 0)
+weaponArrow.Position = UDim2.new(1, -35, 0, 0)
+weaponArrow.BackgroundTransparency = 1
+weaponArrow.Text = "▼"
+weaponArrow.TextColor3 = BANANA_YELLOW
+weaponArrow.TextSize = 12
+weaponArrow.Font = Enum.Font.GothamBold
+weaponArrow.Parent = weaponDropdownBtn
+
+local weaponOptionsList = Instance.new("Frame")
+weaponOptionsList.Size = UDim2.new(1, -20, 0, 105)
+weaponOptionsList.Position = UDim2.new(0, 10, 0, 44)
+weaponOptionsList.BackgroundTransparency = 1
+weaponOptionsList.Parent = weaponDropdownCard
+
+local weaponListLayout = Instance.new("UIListLayout")
+weaponListLayout.Parent = weaponOptionsList
+weaponListLayout.SortOrder = Enum.SortOrder.LayoutOrder
+weaponListLayout.Padding = UDim.new(0, 6)
+
+local isWeaponDropdownOpen = false
+weaponDropdownBtn.MouseButton1Click:Connect(function()
+    isWeaponDropdownOpen = not isWeaponDropdownOpen
+    weaponArrow.Text = isWeaponDropdownOpen and "▲" or "▼"
+    weaponDropdownCard.Size = isWeaponDropdownOpen and UDim2.new(1, 0, 0, 155) or UDim2.new(1, 0, 0, 44)
+end)
+
+for index, wName in ipairs(weaponTypes) do
+    local wOptBtn = Instance.new("TextButton")
+    wOptBtn.Size = UDim2.new(1, 0, 0, 30)
+    wOptBtn.Text = "   " .. wName
+    wOptBtn.TextXAlignment = Enum.TextXAlignment.Left
+    wOptBtn.Font = Enum.Font.GothamBold
+    wOptBtn.TextSize = 12
+    wOptBtn.LayoutOrder = index
+    wOptBtn.Parent = weaponOptionsList
+    addCorner(wOptBtn, 6)
+
+    if wName == selectedWeapon then
+        wOptBtn.BackgroundColor3 = BANANA_YELLOW
+        wOptBtn.TextColor3 = BANANA_TEXT_ON
+    else
+        wOptBtn.BackgroundColor3 = Color3.fromRGB(18, 18, 22)
+        wOptBtn.TextColor3 = Color3.fromRGB(150, 150, 160)
+    end
+
+    wOptBtn.MouseButton1Click:Connect(function()
+        selectedWeapon = wName
+        _G.SelectWeapon = wName
+        weaponDropdownLabel.Text = "Weapon: " .. selectedWeapon
+        isWeaponDropdownOpen = false
+        weaponArrow.Text = "▼"
+        weaponDropdownCard.Size = UDim2.new(1, 0, 0, 44)
+
+        for _, child in pairs(weaponOptionsList:GetChildren()) do
+            if child:IsA("TextButton") then
+                if string.find(child.Text, selectedWeapon) then
+                    child.BackgroundColor3 = BANANA_YELLOW
+                    child.TextColor3 = BANANA_TEXT_ON
+                else
+                    child.BackgroundColor3 = Color3.fromRGB(18, 18, 22)
+                    child.TextColor3 = Color3.fromRGB(150, 150, 160)
+                end
+            end
+        end
+    end)
+end
+
+-- HEIGHT SLIDER
+local heightSliderCard = Instance.new("Frame")
+heightSliderCard.Size = UDim2.new(1, 0, 0, 56)
+heightSliderCard.BackgroundColor3 = BANANA_CARD
+heightSliderCard.LayoutOrder = 2
+heightSliderCard.Parent = settingsPage
+addCorner(heightSliderCard, 8)
+addStroke(heightSliderCard, BANANA_CARD_BORDER, 1.2)
+
+local sliderTitle = Instance.new("TextLabel")
+sliderTitle.Size = UDim2.new(0.65, 0, 0, 28)
+sliderTitle.Position = UDim2.new(0, 12, 0, 4)
+sliderTitle.BackgroundTransparency = 1
+sliderTitle.Text = "Độ cao Farm (Bay cao)"
+sliderTitle.TextColor3 = Color3.fromRGB(255, 255, 255)
+sliderTitle.TextSize = 12
+sliderTitle.Font = Enum.Font.GothamBold
+sliderTitle.TextXAlignment = Enum.TextXAlignment.Left
+sliderTitle.Parent = heightSliderCard
+
+local valueBox = Instance.new("TextBox")
+valueBox.Size = UDim2.new(0, 60, 0, 24)
+valueBox.Position = UDim2.new(1, -70, 0, 6)
+valueBox.BackgroundColor3 = Color3.fromRGB(18, 18, 22)
+valueBox.TextColor3 = Color3.fromRGB(255, 255, 255)
+valueBox.TextSize = 12
+valueBox.Font = Enum.Font.GothamBold
+valueBox.Text = tostring(farmDistanceHeight)
+valueBox.ClearTextOnFocus = false
+valueBox.Parent = heightSliderCard
+addCorner(valueBox, 6)
+
+local sliderTrack = Instance.new("TextButton")
+sliderTrack.Size = UDim2.new(1, -24, 0, 8)
+sliderTrack.Position = UDim2.new(0, 12, 1, -14)
+sliderTrack.BackgroundColor3 = Color3.fromRGB(18, 18, 22)
+sliderTrack.BorderSizePixel = 0
+sliderTrack.Text = ""
+sliderTrack.AutoButtonColor = false
+sliderTrack.Parent = heightSliderCard
+addCorner(sliderTrack, 4)
+
+local sliderFill = Instance.new("Frame")
+sliderFill.Size = UDim2.new(farmDistanceHeight / 100, 0, 1, 0)
+sliderFill.BackgroundColor3 = BANANA_YELLOW
+sliderFill.BorderSizePixel = 0
+sliderFill.Parent = sliderTrack
+addCorner(sliderFill, 4)
+
+local isDraggingSlider = false
+local function updateSliderValue(inputX)
+    local trackAbsPos = sliderTrack.AbsolutePosition.X
+    local trackAbsSize = sliderTrack.AbsoluteSize.X
+    if trackAbsSize <= 0 then return end
+    local relativeX = math.clamp((inputX - trackAbsPos) / trackAbsSize, 0, 1)
+    local val = math.floor(relativeX * 100)
+    farmDistanceHeight = val
+    valueBox.Text = tostring(val)
+    sliderFill.Size = UDim2.new(relativeX, 0, 1, 0)
+end
+
+sliderTrack.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        isDraggingSlider = true
+        updateSliderValue(input.Position.X)
+    end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+    if isDraggingSlider and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+        updateSliderValue(input.Position.X)
+    end
+end)
+
+UserInputService.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        isDraggingSlider = false
+    end
+end)
+
+valueBox.FocusLost:Connect(function()
+    local num = tonumber(valueBox.Text)
+    if num then
+        num = math.clamp(math.floor(num), 0, 100)
+        farmDistanceHeight = num
+        valueBox.Text = tostring(num)
+        sliderFill.Size = UDim2.new(num / 100, 0, 1, 0)
+    else
+        valueBox.Text = tostring(farmDistanceHeight)
+    end
+end)
+
+createToggleFeature(settingsPage, nil, "Bring Mob", "Gom quái xung quanh về 1 điểm", 3, bringMobsEnabled, function(state) 
+    bringMobsEnabled = state 
+end)
+
+local function createInputFeature(parentPage, title, defaultVal, layoutOrder, callback)
+    local inputCard = Instance.new("Frame")
+    inputCard.Size = UDim2.new(1, 0, 0, 38)
+    inputCard.BackgroundColor3 = BANANA_CARD
+    inputCard.LayoutOrder = layoutOrder
+    inputCard.Parent = parentPage
+    addCorner(inputCard, 6)
+
+    local inputTitle = Instance.new("TextLabel")
+    inputTitle.Size = UDim2.new(0.55, 0, 1, 0)
+    inputTitle.Position = UDim2.new(0, 12, 0, 0)
+    inputTitle.BackgroundTransparency = 1
+    inputTitle.Text = title
+    inputTitle.TextColor3 = Color3.fromRGB(255, 255, 255)
+    inputTitle.TextSize = 12
+    inputTitle.Font = Enum.Font.GothamMedium
+    inputTitle.TextXAlignment = Enum.TextXAlignment.Left
+    inputTitle.Parent = inputCard
+
+    local textBox = Instance.new("TextBox")
+    textBox.Size = UDim2.new(0, 110, 0, 26)
+    textBox.Position = UDim2.new(1, -120, 0.5, -13)
+    textBox.BackgroundColor3 = BANANA_SIDEBAR
+    textBox.TextColor3 = Color3.fromRGB(255, 255, 255)
+    textBox.TextSize = 12
+    textBox.Font = Enum.Font.GothamMedium
+    textBox.Text = tostring(defaultVal)
+    textBox.ClearTextOnFocus = false
+    textBox.Parent = inputCard
+    addCorner(textBox, 6)
+    local boxStroke = addStroke(textBox, BANANA_CARD_BORDER, 1)
+    textBox.Focused:Connect(function()
+        TweenService:Create(boxStroke, TweenInfo.new(0.12), {Color = BANANA_YELLOW}):Play()
+    end)
+
+    textBox.FocusLost:Connect(function()
+        TweenService:Create(boxStroke, TweenInfo.new(0.12), {Color = BANANA_CARD_BORDER}):Play()
+        local val = tonumber(textBox.Text)
+        if val then
+            callback(val)
+        else
+            textBox.Text = tostring(defaultVal)
+            callback(defaultVal)
+        end
+    end)
+end
+
+createInputFeature(settingsPage, "Bring Mob Count", maxBringCount, 5, function(val)
+    maxBringCount = val
+end)
+
+createToggleFeature(settingsPage, nil, "Fast Attack V2 (Melee, Sword & Fruit)", "Đánh siêu nhanh không delay cho cả Cận chiến, Kiếm & Trái ác quỷ", 6, fastAttackEnabled, function(state) fastAttackEnabled = state end)
+createToggleFeature(settingsPage, nil, "Auto Buso Haki", "Tự động kích hoạt Haki Vũ Trang", 7, autoHakiEnabled, function(state) autoHakiEnabled = state end)
+createToggleFeature(settingsPage, nil, "Walk On Water", "Đứng & đi trên mặt nước không mất máu", 8, walkOnWaterEnabled, function(state) walkOnWaterEnabled = state end)
+createToggleFeature(settingsPage, nil, "Auto Race V3", "Tự động dùng skill Tộc V3 (Phím T)", 9, autoRaceV3Enabled, function(state) autoRaceV3Enabled = state end)
+createToggleFeature(settingsPage, nil, "Auto Race V4", "Tự động bật Thức Tỉnh Tộc V4 (Phím Y)", 10, autoRaceV4Enabled, function(state) autoRaceV4Enabled = state end)
+createToggleFeature(settingsPage, nil, "Anti-AFK Mode", "Tự động chống văng game (Disconnect) khi treo máy", 11, autoAfkEnabled, function(state) autoAfkEnabled = state end)
+createInputFeature(settingsPage, "Fast Attack Targets", maxAttackTargets, 12, function(val)
+    maxAttackTargets = math.clamp(math.floor(tonumber(val) or 2), 1, 6)
+end)
+
+-- HOÀN THIỆN GIAO DIỆN (viền thẻ, hover, thông báo)
+do
+    -- thẻ nào chưa có viền thì thêm viền mảnh cho đồng bộ
+    for _, data in pairs(tabs) do
+        for _, card in ipairs(data.Page:GetChildren()) do
+            if card:IsA("Frame") and not card:FindFirstChildOfClass("UIStroke") then
+                local st = addStroke(card, BANANA_CARD_BORDER, 1)
+                st.Transparency = 0.35
+            end
+        end
+        data.Page.ScrollBarImageTransparency = 0.25
+    end
+
+    -- hover cho nút đóng / thu nhỏ
+    closeBtn.MouseEnter:Connect(function()
+        TweenService:Create(closeBtn, TweenInfo.new(0.12), {BackgroundColor3 = Color3.fromRGB(205, 62, 62), TextColor3 = Color3.fromRGB(255, 255, 255)}):Play()
+    end)
+    closeBtn.MouseLeave:Connect(function()
+        TweenService:Create(closeBtn, TweenInfo.new(0.12), {BackgroundColor3 = BANANA_CARD, TextColor3 = Color3.fromRGB(200, 200, 200)}):Play()
+    end)
+    minimizeBtn.MouseEnter:Connect(function()
+        TweenService:Create(minimizeBtn, TweenInfo.new(0.12), {BackgroundColor3 = BANANA_YELLOW, TextColor3 = BANANA_TEXT_ON}):Play()
+    end)
+    minimizeBtn.MouseLeave:Connect(function()
+        TweenService:Create(minimizeBtn, TweenInfo.new(0.12), {BackgroundColor3 = BANANA_CARD, TextColor3 = Color3.fromRGB(200, 200, 200)}):Play()
+    end)
+
+    -- thông báo nhỏ khi tải xong
+    local toast = Instance.new("TextLabel")
+    toast.Name = "MinhHubToast"
+    toast.AnchorPoint = Vector2.new(0.5, 0)
+    toast.Size = UDim2.new(0, 230, 0, 34)
+    toast.Position = UDim2.new(0.5, 0, 0, -50)
+    toast.BackgroundColor3 = BANANA_BG
+    toast.Text = "MInh HUB-BLOXFRUITS đã sẵn sàng"
+    toast.TextColor3 = BANANA_YELLOW
+    toast.TextSize = 12
+    toast.Font = Enum.Font.GothamBold
+    toast.Parent = screenGui
+    addCorner(toast, 17)
+    addStroke(toast, BANANA_YELLOW, 1.5)
+    TweenService:Create(toast, TweenInfo.new(0.35, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {Position = UDim2.new(0.5, 0, 0, 18)}):Play()
+    task.delay(3, function()
+        local out = TweenService:Create(toast, TweenInfo.new(0.25), {Position = UDim2.new(0.5, 0, 0, -50)})
+        out:Play()
+        out.Completed:Connect(function() toast:Destroy() end)
+    end)
+end
+
+-- KÉO THẢ & TOGGLE MENU
+local dragging, dragInput, dragStart, startPos
+local function updateInput(input)
+    local delta = input.Position - dragStart
+    mainFrame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+end
+
+header.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        dragging = true; dragStart = input.Position; startPos = mainFrame.Position
+        input.Changed:Connect(function()
+            if input.UserInputState == Enum.UserInputState.End then dragging = false end
+        end)
+    end
+end)
+
+header.InputChanged:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then dragInput = input end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+    if input == dragInput and dragging then updateInput(input) end
+end)
+
+local menuVisible, isMinimized = true, false
+local function toggleMenu()
+    menuVisible = not menuVisible
+    local scale = mainFrame:FindFirstChild("MenuScale")
+    if not scale then
+        mainFrame.Visible = menuVisible
+        return
+    end
+    if menuVisible then
+        scale.Scale = 0.88
+        mainFrame.Visible = true
+        TweenService:Create(scale, TweenInfo.new(0.24, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {Scale = 1}):Play()
+    else
+        local t = TweenService:Create(scale, TweenInfo.new(0.14, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {Scale = 0.9})
+        t:Play()
+        t.Completed:Connect(function()
+            if not menuVisible then mainFrame.Visible = false end
+        end)
+    end
+end
+
+minimizeBtn.MouseButton1Click:Connect(function()
+    isMinimized = not isMinimized
+    minimizeBtn.Text = isMinimized and "+" or "—"
+    TweenService:Create(mainFrame, TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+        {Size = isMinimized and UDim2.new(0, 640, 0, 46) or UDim2.new(0, 640, 0, 400)}):Play()
+    sidebar.Visible = not isMinimized
+    pagesFolder.Visible = not isMinimized
+    pageTitle.Visible = not isMinimized
+    for _, nm in ipairs({"SidebarLine", "TitleUnderline"}) do
+        local o = mainFrame:FindFirstChild(nm)
+        if o then o.Visible = not isMinimized end
+    end
+end)
+
+toggleBtn.MouseButton1Click:Connect(toggleMenu)
+closeBtn.MouseButton1Click:Connect(toggleMenu)
+
+-- WALK ON WATER & NOCLIP LOGIC
+local waterPlatform = Instance.new("Part")
+waterPlatform.Name = "WaterPlatform"
+waterPlatform.Size = Vector3.new(100, 1, 100)
+waterPlatform.Anchored = true
+waterPlatform.CanCollide = true
+waterPlatform.Transparency = 1
+waterPlatform.Parent = workspace
+
+RunService.Stepped:Connect(function()
+    if walkOnWaterEnabled then
+        local character = LocalPlayer.Character
+        if character and character:FindFirstChild("HumanoidRootPart") then
+            local hrp = character.HumanoidRootPart
+            if hrp.Position.Y <= 15 and hrp.Position.Y >= -100 then
+                waterPlatform.CFrame = CFrame.new(hrp.Position.X, 0, hrp.Position.Z)
+                waterPlatform.CanCollide = true
+            else waterPlatform.CanCollide = false end
+        else waterPlatform.CanCollide = false end
+    else waterPlatform.CanCollide = false end
+
+    if autoFarmEnabled or autoFarmMaterialEnabled or autoRaidEnabled or _G.Dungeon or _G.AutoLawRaid or autoChestEnabled then
+        local character = LocalPlayer.Character
+        if character then
+            for _, part in pairs(character:GetDescendants()) do
+                if part:IsA("BasePart") then
+                    part.CanCollide = false
+                    if part.Name == "HumanoidRootPart" then
+                        part.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+                        part.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+                    end
+                end
+            end
+        end
+    end
+end)
+
+local function AutoHaki()
+    local character = LocalPlayer.Character
+    if character and not character:FindFirstChild("HasBuso") then
+        local remotes = ReplicatedStorage:FindFirstChild("Remotes")
+        if remotes and remotes:FindFirstChild("CommF_") then 
+            remotes.CommF_:InvokeServer("Buso") 
+        end
+    end
+end
+
+task.spawn(function()
+    while true do
+        task.wait(1)
+        pcall(function()
+            if autoHakiEnabled then
+                AutoHaki()
+            end
+
+            if autoRaceV3Enabled then
+                local commF = ReplicatedStorage:FindFirstChild("Remotes") and ReplicatedStorage.Remotes:FindFirstChild("CommF_")
+                if commF then commF:InvokeServer("ActivateAbility") end
+                if okVIM and VirtualInputManager then
+                    VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.T, false, game)
+                    task.wait(0.05)
+                    VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.T, false, game)
+                end
+            end
+
+            if autoRaceV4Enabled and okVIM and VirtualInputManager then
+                VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.Y, false, game)
+                task.wait(0.05)
+                VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.Y, false, game)
+            end
+        end)
+    end
+end)
+
+-- LOGIC AUTO RANDOM FRUIT (REMOTE-FIRST / KHÔNG CẦN BAY TỚI NPC)
+-- Cải tiến:
+-- 1) Luôn lấy CommF_ mới trước mỗi lần mua.
+-- 2) Gọi "Cousin","Check" trước "Cousin","Buy" để đồng bộ trạng thái NPC nếu server yêu cầu.
+-- 3) Kiểm tra thay đổi inventory theo tên Tool, không chỉ dựa vào số lượng trái.
+-- 4) Không dùng cooldown 2 giờ ngay khi lần gọi thất bại.
+-- 5) Tách hoàn toàn khỏi hệ thống bay Raid/Farm.
+
+task.spawn(function()
+    local RF_DEBUG            = true
+    local RF_COOLDOWN        = 7200 + 30
+    local RF_RETRY            = 30
+    local RF_CHECK_DELAY      = 0.25
+    local RF_RESULT_WAIT      = 2.5
+
+    local nextBuyAt           = 0
+    local wasEnabled          = false
+    local successfulPurchase  = false
+
+    local function flog(...)
+        if RF_DEBUG then
+            print("[FruitRemote]", ...)
+        end
+    end
+
+    local function getCommF()
+        local remotes = ReplicatedStorage:FindFirstChild("Remotes")
+        local commF = remotes and remotes:FindFirstChild("CommF_")
+        if commF and commF:IsA("RemoteFunction") then
+            return commF
+        end
+        return nil
+    end
+
+    local function getBeli()
+        local data = LocalPlayer:FindFirstChild("Data")
+        local beli = data and data:FindFirstChild("Beli")
+        return beli and tonumber(beli.Value) or nil
+    end
+
+    -- Snapshot inventory để phát hiện Tool trái mới ngay cả khi Beli cập nhật chậm.
+    local function snapshotFruitTools()
+        local snapshot = {}
+
+        local function scan(container)
+            if not container then return end
+
+            for _, tool in ipairs(container:GetChildren()) do
+                if tool:IsA("Tool") then
+                    local isFruit =
+                        tool:FindFirstChild("Fruit") ~= nil
+                        or tool:GetAttribute("Fruit") ~= nil
+                        or string.find(string.lower(tool.Name), " fruit", 1, true) ~= nil
+
+                    if isFruit then
+                        snapshot[tool.Name] = (snapshot[tool.Name] or 0) + 1
+                    end
+                end
+            end
+        end
+
+        scan(LocalPlayer:FindFirstChild("Backpack"))
+        scan(LocalPlayer.Character)
+
+        return snapshot
+    end
+
+    local function inventoryChanged(before, after)
+        for name, countAfter in pairs(after) do
+            if countAfter > (before[name] or 0) then
+                return true, name
+            end
+        end
+        return false, nil
+    end
+
+    local function describeResult(label, ok, result)
+        if not ok then
+            flog(label, "ERROR:", tostring(result))
+            return
+        end
+
+        if type(result) == "table" then
+            local parts = {}
+            for k, v in pairs(result) do
+                parts[#parts + 1] = tostring(k) .. "=" .. tostring(v)
+            end
+            flog(label, "OK:", "{" .. table.concat(parts, ", ") .. "}")
+        else
+            flog(label, "OK:", tostring(result))
+        end
+    end
+
+    local function remoteBuyRandomFruit()
+        local commF = getCommF()
+        if not commF then
+            return false, "Không tìm thấy Remotes.CommF_"
+        end
+
+        local beliBefore = getBeli()
+        local inventoryBefore = snapshotFruitTools()
+
+        -- Một số bản server dùng bước Check trước khi Buy.
+        local checkOk, checkResult = pcall(function()
+            return commF:InvokeServer("Cousin", "Check")
+        end)
+        describeResult("Cousin/Check", checkOk, checkResult)
+
+        task.wait(RF_CHECK_DELAY)
+
+        local buyOk, buyResult = pcall(function()
+            return commF:InvokeServer("Cousin", "Buy")
+        end)
+        describeResult("Cousin/Buy", buyOk, buyResult)
+
+        if not buyOk then
+            return false, "Remote Buy lỗi: " .. tostring(buyResult)
+        end
+
+        -- Chờ ngắn để Backpack/Character cập nhật.
+        local deadline = tick() + RF_RESULT_WAIT
+        while tick() < deadline do
+            task.wait(0.25)
+
+            local beliAfter = getBeli()
+            local inventoryAfter = snapshotFruitTools()
+            local changed, fruitName = inventoryChanged(inventoryBefore, inventoryAfter)
+
+            if changed then
+                flog("✅ Nhận trái mới:", fruitName or "Unknown")
+                return true, "Inventory thay đổi"
+            end
+
+            -- Không bắt buộc Beli phải giảm: server có thể cập nhật trễ.
+            if beliBefore and beliAfter and beliAfter < beliBefore then
+                flog("✅ Beli thay đổi:", beliBefore, "->", beliAfter)
+                return true, "Beli đã giảm"
+            end
+        end
+
+        -- Nếu remote trả về true, coi là server đã chấp nhận giao dịch;
+        -- vẫn không đặt cooldown dài nếu kết quả không xác nhận rõ.
+        if buyResult == true then
+            return true, "Server trả về true"
+        end
+
+        if type(buyResult) == "string" then
+            local low = string.lower(buyResult)
+            if string.find(low, "success", 1, true)
+                or string.find(low, "bought", 1, true)
+                or string.find(low, "purchase", 1, true)
+                or string.find(low, "fruit", 1, true) then
+                return true, buyResult
+            end
+        end
+
+        return false, "Server không xác nhận mua thành công"
+    end
+
+    while task.wait(1) do
+        if autoRandomFruitEnabled then
+            if not wasEnabled then
+                wasEnabled = true
+                nextBuyAt = 0
+                successfulPurchase = false
+                flog("Auto Random Fruit: BẬT - thử remote ngay")
+            end
+
+            if tick() >= nextBuyAt then
+                local ok, reason = remoteBuyRandomFruit()
+
+                if ok then
+                    successfulPurchase = true
+                    nextBuyAt = tick() + RF_COOLDOWN
+                    flog("🎉 Random Fruit thành công:", reason)
+                    flog("Lần thử tiếp theo sau khoảng 2 giờ.")
+                else
+                    successfulPurchase = false
+                    nextBuyAt = tick() + RF_RETRY
+                    flog("❌ Chưa mua được:", reason)
+                    flog("Sẽ thử lại sau", RF_RETRY, "giây; KHÔNG bay tới NPC.")
+                end
+            end
+        else
+            if wasEnabled then
+                flog("Auto Random Fruit: TẮT")
+            end
+
+            wasEnabled = false
+            successfulPurchase = false
+        end
+    end
+end)
+
+-- LOGIC AUTO FARM CHEST
+task.spawn(function()
+    local CollectionService = game:GetService("CollectionService")
+    local attempts   = setmetatable({}, {__mode = "k"})  -- số lần thử mỗi rương
+    local blacklist  = setmetatable({}, {__mode = "k"})  -- rương lỗi: bỏ qua tạm thời
+
+    while task.wait(0.25) do
+        if autoChestEnabled then
+            -- nếu người dùng bật chế độ farm khác thì nhường, tự tắt farm chest
+            if autoFarmEnabled or autoFarmMaterialEnabled or autoRaidEnabled or _G.Dungeon or _G.AutoLawRaid then
+                autoChestEnabled = false
+                if toggleUpdateFuncs["AutoFarmChestToggle"] then toggleUpdateFuncs["AutoFarmChestToggle"](false) end
+            else
+                pcall(function()
+                    local char = LocalPlayer.Character
+                    local hrp  = char and char:FindFirstChild("HumanoidRootPart")
+                    local hum  = char and char:FindFirstChildOfClass("Humanoid")
+                    if not hrp or not hum or hum.Health <= 0 then return end
+
+                    -- tìm rương còn dùng được, gần nhất
+                    local bestChest, bestDist, bestPos
+                    for _, chest in ipairs(CollectionService:GetTagged("_ChestTagged")) do
+                        local banUntil = blacklist[chest]
+                        if chest.Parent and not chest:GetAttribute("IsDisabled") and not (banUntil and tick() < banUntil) then
+                            local ok, cf = pcall(function() return chest:GetPivot() end)
+                            if ok and cf then
+                                local d = (cf.Position - hrp.Position).Magnitude
+                                if not bestDist or d < bestDist then
+                                    bestChest, bestDist, bestPos = chest, d, cf.Position
+                                end
+                            end
+                        end
+                    end
+                    if not bestChest then return end
+
+                    -- bay tới rương rồi chạm vào để nhặt
+                    flyTo(CFrame.new(bestPos + Vector3.new(0, 3, 0)), nil, function() return autoChestEnabled end)
+                    if not autoChestEnabled then stopAllFlying() return end
+                    hrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+                    if not hrp then return end
+                    hrp.CFrame = CFrame.new(bestPos)
+                    task.wait(0.35)
+
+                    -- chưa nhặt được sau vài lần thì bỏ qua rương này 60 giây
+                    if bestChest.Parent and not bestChest:GetAttribute("IsDisabled") then
+                        attempts[bestChest] = (attempts[bestChest] or 0) + 1
+                        if attempts[bestChest] >= 3 then
+                            blacklist[bestChest] = tick() + 60
+                            attempts[bestChest] = 0
+                        end
+                    else
+                        attempts[bestChest] = nil
+                    end
+                end)
+            end
+        end
+    end
+end)
+
+-- LOGIC AUTO RANDOM BONES & STORE FRUIT
+task.spawn(function()
+    while task.wait(2) do
+        if autoRandomBonesEnabled then
+            pcall(function()
+                local commF = ReplicatedStorage:FindFirstChild("Remotes") and ReplicatedStorage.Remotes:FindFirstChild("CommF_")
+                if commF then
+                    commF:InvokeServer("Bones", "Buy", 1, 1)
+                end
+            end)
+        end
+    end
+end)
+
+task.spawn(function()
+    while task.wait(1) do
+        local commF = ReplicatedStorage:FindFirstChild("Remotes") and ReplicatedStorage.Remotes:FindFirstChild("CommF_")
+
+        if autoStoreFruitEnabled then
+            pcall(function()
+                if not commF then return end
+
+                local backpack = LocalPlayer:FindFirstChild("Backpack")
+                local char = LocalPlayer.Character
+
+                local function storeTool(tool)
+                    if tool and tool:IsA("Tool") then
+                        local toolName = tool.Name
+                        local lowerName = string.lower(toolName)
+                        
+                        if string.find(lowerName, "fruit") or tool:FindFirstChild("Fruit") or tool:GetAttribute("Fruit") then
+                            if char and tool.Parent == char then
+                                tool.Parent = backpack
+                                task.wait(0.2)
+                            end
+                            
+                            commF:InvokeServer("StoreFruit", toolName, tool)
+                            
+                            local cleanName = string.gsub(toolName, " Fruit", "")
+                            if cleanName ~= toolName then
+                                commF:InvokeServer("StoreFruit", cleanName, tool)
+                            end
+                        end
+                    end
+                end
+
+                if backpack then
+                    for _, tool in pairs(backpack:GetChildren()) do
+                        storeTool(tool)
+                    end
+                end
+
+                if char then
+                    for _, tool in pairs(char:GetChildren()) do
+                        storeTool(tool)
+                    end
+                end
+            end)
+        end
+    end
+end)
+
+-- HÀM KIỂM TRA LOẠI VŨ KHÍ (MELEE, SWORD & BLOX FRUIT)
+local function isMatchingWeaponType(tool, targetType)
+    if not tool or not tool:IsA("Tool") then return false end
+    local toolName = string.lower(tool.Name)
+    local target = string.lower(targetType or "")
+
+    local toolTipType = ""
+    local tObj = tool:FindFirstChild("ToolTipType") or tool:FindFirstChild("ToolTip")
+    if tObj then
+        if tObj:IsA("StringValue") then
+            toolTipType = string.lower(tObj.Value)
+        else
+            toolTipType = string.lower(tostring(tObj.Value or tObj))
+        end
+    end
+
+    local attrType = tool:GetAttribute("ToolTipType") or tool:GetAttribute("Type")
+    if attrType then
+        toolTipType = string.lower(tostring(attrType))
+    end
+
+    if target == "melee" then
+        if toolTipType == "melee" or tool:FindFirstChild("Melee") then return true end
+        local meleeKeywords = {"combat", "black leg", "electro", "fishman karate", "dragon claw", "superhuman", "death step", "sharkman karate", "electric claw", "dragon talon", "godhuman", "sanguine art"}
+        for _, kw in ipairs(meleeKeywords) do
+            if string.find(toolName, kw) then return true end
+        end
+    elseif target == "sword" then
+        if toolTipType == "sword" or tool:FindFirstChild("Sword") then return true end
+        local swordKeywords = {"katana", "saber", "cutlass", "blade", "sword", "yoru", "pole", "pipe", "trident", "scythe", "dagger", "bisento", "soul cane", "fox lamp", "cursed dual", "true triple", "hallow", "warden"}
+        for _, kw in ipairs(swordKeywords) do
+            if string.find(toolName, kw) then return true end
+        end
+    elseif target == "blox fruit" or target == "fruit" then
+        if toolTipType == "blox fruit" or toolTipType == "fruit" or tool:FindFirstChild("Fruit") or tool:GetAttribute("Fruit") then
+            return true
+        end
+        local fruitKeywords = {
+            "fruit", "blox fruit", "rocket", "spin", "chop", "spring", "bomb", "smoke", "spike", "flame", "falcon", 
+            "ice", "sand", "dark", "diamond", "light", "rubber", "barrier", "ghost", "magma", "quake", "buddha", 
+            "love", "spider", "sound", "phoenix", "portal", "rumble", "pain", "blizzard", "gravity", "mammoth", 
+            "t-rex", "dough", "shadow", "venom", "control", "gas", "spirit", "dragon", "leopard", "kitsune", "yeti"
+        }
+        for _, kw in ipairs(fruitKeywords) do
+            if string.find(toolName, kw) then return true end
+        end
+        if tool:FindFirstChild("Z") or tool:FindFirstChild("Skill") or tool:FindFirstChild("LeftClick") then
+            if toolTipType ~= "melee" and toolTipType ~= "sword" and toolTipType ~= "gun" then
+                return true
+            end
+        end
+    end
+    return false
+end
+
+local function equipSelectedWeapon(weaponName)
+    local targetW = weaponName or selectedWeapon or _G.SelectWeapon or "Melee"
+    local character = LocalPlayer.Character
+    local backpack = LocalPlayer:FindFirstChild("Backpack")
+    if not character or not backpack then return end
+
+    local humanoid = character:FindFirstChildOfClass("Humanoid")
+    if not humanoid then return end
+
+    local currentTool = character:FindFirstChildOfClass("Tool")
+    if currentTool and isMatchingWeaponType(currentTool, targetW) then return end
+
+    for _, tool in pairs(backpack:GetChildren()) do
+        if isMatchingWeaponType(tool, targetW) then
+            humanoid:EquipTool(tool)
+            return
+        end
+    end
+
+    -- Fallback: Trang bị vũ khí bất kỳ trong Balo nếu không tìm thấy loại khớp
+    if not character:FindFirstChildOfClass("Tool") then
+        local anyTool = backpack:FindFirstChildOfClass("Tool")
+        if anyTool then
+            humanoid:EquipTool(anyTool)
+        end
+    end
+end
+_G.EquipWeapon = equipSelectedWeapon
+
+-- HỆ THỐNG FARM MATERIAL ĐA SEA (Sea 1 / 2 / 3)
+-- Tìm quái theo TÊN trong workspace.Enemies, bay tới điểm hồi sinh (EnemySpawns) khi chưa có quái.
+local MatFarm = {
+    sea = World1 and 1 or (World2 and 2 or 3),
+    cacheKey = nil,
+    set = nil,
+    points = nil,
+    pointsAt = 0,
+    locked = nil,
+    warnKey = nil,
+    lastEntrance = 0,
+}
+
+do
+    local function notify(text)
+        pcall(function()
+            game:GetService("StarterGui"):SetCore("SendNotification", {
+                Title = "Auto Farm Material",
+                Text = text,
+                Duration = 6,
+            })
+        end)
+        print("[Material]", text)
+    end
+
+    -- "Pirate [Lv. 35]" -> "Pirate"
+    local function normalizeMobName(name)
+        return (tostring(name):gsub("%s*%[.-%]%s*$", ""))
+    end
+
+    local function getPlayerRoot()
+        local char = LocalPlayer.Character
+        return char and char:FindFirstChild("HumanoidRootPart")
+    end
+
+    local function partPosition(obj)
+        if obj:IsA("BasePart") then
+            return obj.Position
+        end
+        local ok, cf = pcall(function() return obj:GetPivot() end)
+        return ok and cf and cf.Position or nil
+    end
+
+    local function seaListText(perSea)
+        local list = {}
+        for sea = 1, 3 do
+            if perSea[sea] then
+                list[#list + 1] = "Sea " .. sea
+            end
+        end
+        return table.concat(list, ", ")
+    end
+
+    -- Trả về (tập tên quái, dữ liệu) của material đang chọn ở Sea hiện tại; nil nếu không farm được.
+    function MatFarm.getMobSet()
+        local sel = selectedMaterialTarget
+        local data = materialData[sel]
+
+        if not data then
+            if MatFarm.warnKey ~= "none" then
+                MatFarm.warnKey = "none"
+                notify("Bạn chưa chọn Material trong menu.")
+            end
+            return nil
+        end
+
+        local entry = data[MatFarm.sea]
+        if not entry then
+            local key = sel .. "_noSea" .. MatFarm.sea
+            if MatFarm.warnKey ~= key then
+                MatFarm.warnKey = key
+                notify(sel .. " không rớt ở Sea " .. MatFarm.sea .. ". Hãy qua: " .. seaListText(data))
+            end
+            return nil
+        end
+
+        local key = sel .. "_" .. MatFarm.sea
+        if MatFarm.cacheKey ~= key then
+            MatFarm.cacheKey = key
+            MatFarm.warnKey = nil
+            MatFarm.set = {}
+            for _, mobName in ipairs(entry.mobs) do
+                MatFarm.set[mobName] = true
+            end
+            MatFarm.points = nil
+            MatFarm.pointsAt = 0
+            MatFarm.locked = nil
+        end
+
+        return MatFarm.set, entry
+    end
+
+    local function isMatMob(enemy)
+        return enemy ~= nil and MatFarm.set ~= nil and MatFarm.set[normalizeMobName(enemy.Name)] == true
+    end
+
+    local function isAlive(enemy)
+        if not enemy or not enemy.Parent then return false end
+        local hum = enemy:FindFirstChildOfClass("Humanoid")
+        return hum ~= nil and hum.Health > 0 and enemy:FindFirstChild("HumanoidRootPart") ~= nil
+    end
+
+    -- Quái rớt material gần người chơi nhất (giữ nguyên mục tiêu cũ khi còn sống để không đổi qua đổi lại).
+    function MatFarm.getEnemy()
+        local set = MatFarm.getMobSet()
+        if not set then return nil end
+
+        if MatFarm.locked and isAlive(MatFarm.locked) and isMatMob(MatFarm.locked) then
+            return MatFarm.locked
+        end
+        MatFarm.locked = nil
+
+        local playerHrp = getPlayerRoot()
+        if not playerHrp then return nil end
+
+        local enemiesFolder = workspace:FindFirstChild("Enemies") or workspace
+        local best, bestDist = nil, math.huge
+        for _, enemy in ipairs(enemiesFolder:GetChildren()) do
+            if isMatMob(enemy) and isAlive(enemy) then
+                local d = (enemy.HumanoidRootPart.Position - playerHrp.Position).Magnitude
+                if d < bestDist then
+                    bestDist = d
+                    best = enemy
+                end
+            end
+        end
+
+        MatFarm.locked = best
+        return best
+    end
+
+    -- Danh sách điểm đứng chờ quái hồi sinh (lấy từ EnemySpawns của chính Sea đang chơi).
+    function MatFarm.getPoints()
+        local set, entry = MatFarm.getMobSet()
+        if not set then return {} end
+
+        if MatFarm.points and (tick() - MatFarm.pointsAt) < 15 then
+            return MatFarm.points
+        end
+
+        local found = {}
+        local worldOrigin = workspace:FindFirstChild("_WorldOrigin")
+        local spawns = worldOrigin and worldOrigin:FindFirstChild("EnemySpawns")
+
+        if spawns then
+            for pass = 1, 2 do
+                for _, sp in ipairs(spawns:GetChildren()) do
+                    local match = set[normalizeMobName(sp.Name)] == true
+                    if not match and pass == 2 then
+                        local low = string.lower(sp.Name)
+                        for mobName in pairs(set) do
+                            if string.find(low, string.lower(mobName), 1, true) then
+                                match = true
+                                break
+                            end
+                        end
+                    end
+                    if match then
+                        local pos = partPosition(sp)
+                        if pos then found[#found + 1] = pos end
+                    end
+                end
+                if #found > 0 then break end
+            end
+        end
+
+        local points = {}
+        if #found > 0 then
+            local hrp = getPlayerRoot()
+            local origin = hrp and hrp.Position or found[1]
+            table.sort(found, function(a, b)
+                return (a - origin).Magnitude < (b - origin).Magnitude
+            end)
+
+            -- Chỉ lấy cụm điểm gần nhất, bỏ điểm trùng nhau để vòng quét ngắn gọn.
+            local nearest = found[1]
+            for _, pos in ipairs(found) do
+                if #points >= 10 then break end
+                if (pos - nearest).Magnitude <= 700 then
+                    local dup = false
+                    for _, p in ipairs(points) do
+                        if (p - pos).Magnitude < 60 then dup = true break end
+                    end
+                    if not dup then points[#points + 1] = pos end
+                end
+            end
+        else
+            for _, pos in ipairs(entry.spots) do
+                points[#points + 1] = pos
+            end
+        end
+
+        MatFarm.points = points
+        MatFarm.pointsAt = tick()
+        return points
+    end
+
+    -- Sea 1: Underwater City (Fish Tail) cần "requestEntrance" mới vào được.
+    -- Trả về true nếu vừa dịch chuyển (vòng lặp nên chờ frame sau).
+    function MatFarm.enterIfNeeded(hrp, targetPos)
+        if MatFarm.sea == 1 and targetPos.X > 50000 and hrp.Position.X < 50000 then
+            if tick() - MatFarm.lastEntrance > 6 then
+                MatFarm.lastEntrance = tick()
+                pcall(function()
+                    local remotes = ReplicatedStorage:FindFirstChild("Remotes")
+                    local commF = remotes and remotes:FindFirstChild("CommF_")
+                    if commF then
+                        commF:InvokeServer("requestEntrance", Vector3.new(61163.8515625, 5.342342376708252, 1819.7841796875))
+                    end
+                end)
+            end
+            return true
+        end
+        return false
+    end
+end
+
+local function getTargetEnemy()
+    local closestEnemy, shortestDistance = nil, math.huge
+    local character = LocalPlayer.Character
+
+    if character and character:FindFirstChild("HumanoidRootPart") then
+        local playerPos = character.HumanoidRootPart.Position
+        local enemiesFolder = workspace:FindFirstChild("Enemies") or workspace
+        
+        if selectedFarmTarget == "Cake Prince" then
+            for _, v in pairs(enemiesFolder:GetChildren()) do
+                local hrp, humanoid = v:FindFirstChild("HumanoidRootPart"), v:FindFirstChild("Humanoid")
+                if hrp and humanoid and humanoid.Health > 0 then
+                    local mobName = string.lower(v.Name)
+                    if string.find(mobName, "cake prince", 1, true) or string.find(mobName, "dough king", 1, true) then
+                        local distance = (hrp.Position - playerPos).Magnitude
+                        if distance < shortestDistance then
+                            shortestDistance = distance
+                            closestEnemy = v
+                        end
+                    end
+                end
+            end
+            if closestEnemy then return closestEnemy end
+        end
+
+        local questName, questLevel, questMobName = GetQuestData()
+        local partialEnemy, partialDist = nil, math.huge
+
+        -- LỰA CHỌN MỤC TIÊU CHO ĐẢO XƯƠNG
+        local boneTargetMob = nil
+        if selectedFarmTarget == "Bones" and autoQuestEnabled and World3 then
+            local _, _, hMob = GetHauntedQuestData()
+            boneTargetMob = string.lower(hMob)
+        end
+
+        for _, v in pairs(enemiesFolder:GetChildren()) do
+            local hrp, humanoid = v:FindFirstChild("HumanoidRootPart"), v:FindFirstChild("Humanoid")
+            if hrp and humanoid and humanoid.Health > 0 then
+                local isMatchingTarget, mobName = false, string.lower(v.Name)
+                if selectedFarmTarget == "Auto Level" then
+                    local mScore = Q.mobMatches(v.Name, questMobName)
+                    if mScore == 2 then
+                        isMatchingTarget = true
+                    elseif mScore == 1 then
+                        local dPart = (hrp.Position - playerPos).Magnitude
+                        if dPart < partialDist then partialDist = dPart; partialEnemy = v end
+                    end
+                elseif selectedFarmTarget == "Cake Prince" then
+                    if not isCakePrinceReady then
+                        if string.find(mobName, "baking staff", 1, true) or string.find(mobName, "head baker", 1, true) or string.find(mobName, "cake guard", 1, true) or string.find(mobName, "cookie crafter", 1, true) or string.find(mobName, "cocoa warrior", 1, true) then 
+                            isMatchingTarget = true 
+                        end
+                    end
+                elseif selectedFarmTarget == "Bones" then
+                    if boneTargetMob then
+                        if string.find(mobName, boneTargetMob, 1, true) then 
+                            isMatchingTarget = true 
+                        end
+                    else
+                        if string.find(mobName, "reborn skeleton", 1, true) or string.find(mobName, "living zombie", 1, true) or string.find(mobName, "demonic soul", 1, true) or string.find(mobName, "possessed mummy", 1, true) or string.find(mobName, "posessed mummy", 1, true) then 
+                            isMatchingTarget = true 
+                        end
+                    end
+                elseif selectedFarmTarget == "Farm Boss" then
+                    if selectedBossTarget ~= "None" and string.find(mobName, string.lower(selectedBossTarget), 1, true) then isMatchingTarget = true end
+                end
+
+                if isMatchingTarget then
+                    local distance = (hrp.Position - playerPos).Magnitude
+                    if distance < shortestDistance then
+                        shortestDistance = distance
+                        closestEnemy = v
+                    end
+                end
+            end
+        end
+
+        -- Không có quái trùng tên hoàn toàn -> dùng quái có tên gần giống nhất
+        if not closestEnemy and partialEnemy then closestEnemy = partialEnemy end
+
+        -- Dự phòng nếu quái Quest tại Đảo Xương chưa Spawn: Đánh quái xương bất kỳ
+        if selectedFarmTarget == "Bones" and not closestEnemy then
+            for _, v in pairs(enemiesFolder:GetChildren()) do
+                local hrp, humanoid = v:FindFirstChild("HumanoidRootPart"), v:FindFirstChild("Humanoid")
+                if hrp and humanoid and humanoid.Health > 0 then
+                    local mobName = string.lower(v.Name)
+                    if string.find(mobName, "reborn skeleton", 1, true) or string.find(mobName, "living zombie", 1, true) or string.find(mobName, "demonic soul", 1, true) or string.find(mobName, "possessed mummy", 1, true) or string.find(mobName, "posessed mummy", 1, true) then
+                        local distance = (hrp.Position - playerPos).Magnitude
+                        if distance < shortestDistance then
+                            shortestDistance = distance
+                            closestEnemy = v
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return closestEnemy
+end
+
+local function isMobBoss(mobName)
+    local lowerName = string.lower(mobName)
+    for _, bossesList in pairs(seaBosses) do
+        for _, bName in ipairs(bossesList) do
+            if string.find(lowerName, string.lower(bName), 1, true) then
+                return true
+            end
+        end
+    end
+    return false
+end
+
+-- =========================================================--
+--            TÍNH NĂNG GOM QUÁI MƯỢT MÀ                    --
+-- =========================================================--
+RunService.Heartbeat:Connect(function(deltaTime)
+    if not bringMobsEnabled or not targetEnemy or type(targetEnemy) ~= "userdata" or not targetEnemy:FindFirstChild("HumanoidRootPart") then return end
+    if targetEnemy:FindFirstChild("Humanoid") and targetEnemy.Humanoid.Health <= 0 then return end
+
+    local targetHRP = targetEnemy.HumanoidRootPart
+    local enemiesFolder = workspace:FindFirstChild("Enemies") or workspace
+    local broughtCount = 0
+
+    pcall(function()
+        if sethiddenproperty then
+            sethiddenproperty(LocalPlayer, "SimulationRadius", math.huge)
+        end
+    end)
+
+    for _, mob in pairs(enemiesFolder:GetChildren()) do
+        if broughtCount >= (maxBringCount - 1) then break end
+
+        if mob ~= targetEnemy and mob:FindFirstChild("HumanoidRootPart") and mob:FindFirstChild("Humanoid") and mob.Humanoid.Health > 0 then
+            if not isMobBoss(mob.Name) then
+                local mobHrp = mob.HumanoidRootPart
+                local dist = (mobHrp.Position - targetHRP.Position).Magnitude
+
+                if dist <= bringRadius then
+                    mobHrp.CanCollide = false
+                    mobHrp.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+                    mobHrp.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+                    mob.Humanoid.PlatformStand = true
+                    mob.Humanoid.WalkSpeed = 0
+                    mob.Humanoid.JumpPower = 0
+
+                    local targetFlatCF = CFrame.new(targetHRP.Position.X, mobHrp.Position.Y, targetHRP.Position.Z)
+                    mobHrp.CFrame = mobHrp.CFrame:Lerp(targetFlatCF, math.clamp(deltaTime * 12, 0, 1))
+
+                    broughtCount = broughtCount + 1
+                end
+            end
+        end
+    end
+end)
+
+-- =========================================================--
+--     XỬ LÝ ĐÁNH NHANH TỐI ƯU SIÊU TỐC (FAST ATTACK FIXED)  --
+-- =========================================================--
+local RegisterAttack, RegisterHit, THit
+pcall(function()
+    local net = ReplicatedStorage:FindFirstChild("Modules") and ReplicatedStorage.Modules:FindFirstChild("Net")
+    if net then
+        RegisterAttack = net:FindFirstChild("RE/RegisterAttack")
+        RegisterHit    = net:FindFirstChild("RE/RegisterHit")
+        THit           = net:FindFirstChild("RE/THit")
+    end
+end)
+
+local lastAttackTime = 0
+local attackInterval = 0.015
+
+local function performUltraFastAttackV2()
+    if not fastAttackEnabled then return end
+    if not (autoFarmEnabled or autoFarmMaterialEnabled or autoRaidEnabled or _G.Dungeon or _G.AutoLawRaid) then return end
+    
+    local now = tick()
+    if now - lastAttackTime < attackInterval then return end
+    lastAttackTime = now
+
+    local char = LocalPlayer.Character
+    if not char then return end
+
+    local tool = char:FindFirstChildOfClass("Tool")
+    if not tool then return end
+
+    tool:Activate()
+
+    if okVU and VirtualUser then
+        VirtualUser:CaptureController()
+        VirtualUser:ClickButton1(Vector2.new(800, 800))
+    end
+
+    local hrpPlayer = char:FindFirstChild("HumanoidRootPart")
+    if not hrpPlayer then return end
+
+    local pPos = hrpPlayer.Position
+    local enemiesFolder = workspace:FindFirstChild("Enemies") or workspace
+    local limit = math.max(1, math.floor(maxAttackTargets or 2))
+
+    local candidates = {}
+    for _, mob in pairs(enemiesFolder:GetChildren()) do
+        local mobHrp = mob:FindFirstChild("HumanoidRootPart")
+        local mobHum = mob:FindFirstChild("Humanoid")
+        if mobHrp and mobHum and mobHum.Health > 0 then
+            local d = (mobHrp.Position - pPos).Magnitude
+            if d <= 70 then
+                table.insert(candidates, {hrp = mobHrp, dist = d, isMain = (mob == targetEnemy)})
+            end
+        end
+    end
+
+    table.sort(candidates, function(x, y)
+        if x.isMain ~= y.isMain then return x.isMain end
+        return x.dist < y.dist
+    end)
+
+    local hitList = {}
+    for i = 1, math.min(limit, #candidates) do
+        hitList[i] = candidates[i].hrp
+    end
+
+    if #hitList > 0 then
+        if RegisterAttack then RegisterAttack:FireServer(0) end
+        if RegisterHit then
+            for _, targetHrp in ipairs(hitList) do
+                RegisterHit:FireServer(targetHrp, hitList)
+            end
+        end
+        if THit then
+            for _, targetHrp in ipairs(hitList) do
+                THit:FireServer(targetHrp)
+            end
+        end
+    end
+end
+
+RunService.Heartbeat:Connect(function()
+    if fastAttackEnabled then
+        pcall(performUltraFastAttackV2)
+    end
+end)
+
+-- VÒNG LẶP CHUYỂN & BAY QUA NHIỀU ĐIỂM FARM MATERIAL KHÁC NHAU (Sea 1 / 2 / 3)
+task.spawn(function()
+    while true do
+        task.wait()
+        if autoFarmMaterialEnabled then
+            pcall(function()
+                -- Không farm được (chưa chọn / material không có ở Sea này) -> chỉ thông báo, không bay lung tung
+                if not MatFarm.getMobSet() then return end
+
+                equipSelectedWeapon()
+                local character = LocalPlayer.Character
+                if character and character:FindFirstChild("HumanoidRootPart") then
+                    local hrp = character.HumanoidRootPart
+                    local heightOffset = (farmDistanceHeight and farmDistanceHeight > 0) and farmDistanceHeight or 35
+                    local enemy = MatFarm.getEnemy()
+
+                    if enemy and enemy:FindFirstChild("HumanoidRootPart") then
+                        local enemyHrp = enemy.HumanoidRootPart
+
+                        local targetPos = enemyHrp.Position + Vector3.new(0, heightOffset, 0)
+                        local _, yaw, _ = enemyHrp.CFrame:ToOrientation()
+                        local targetCFrame = CFrame.new(targetPos) * CFrame.fromOrientation(0, yaw, 0)
+                        local distance = (hrp.Position - targetPos).Magnitude
+
+                        -- Quái ở Underwater City mà đang đứng ngoài -> vào thành phố trước
+                        if MatFarm.enterIfNeeded(hrp, enemyHrp.Position) then return end
+
+                        if distance > 100 then
+                            if not currentFlyTween or targetEnemy ~= enemy then
+                                targetEnemy = enemy
+                                if currentFlyTween then currentFlyTween:Cancel() end
+                                currentFlyTween = TweenService:Create(hrp, TweenInfo.new(distance / flySpeed, Enum.EasingStyle.Linear), {CFrame = targetCFrame})
+                                currentFlyTween:Play()
+                                do local tw = currentFlyTween; tw.Completed:Connect(function() if currentFlyTween == tw then currentFlyTween = nil end end) end
+                            end
+                        else
+                            if currentFlyTween then currentFlyTween:Cancel(); currentFlyTween = nil end
+                            targetEnemy = enemy
+                            hrp.CFrame = targetCFrame
+                        end
+                    else
+                        -- Chưa có quái: bay tới các điểm hồi sinh của quái rớt material ở Sea hiện tại
+                        local matPosList = MatFarm.getPoints()
+                        if #matPosList > 0 then
+                            if currentMatPointIndex > #matPosList then
+                                currentMatPointIndex = 1
+                            end
+
+                            local currentTargetPoint = matPosList[currentMatPointIndex]
+
+                            if MatFarm.enterIfNeeded(hrp, currentTargetPoint) then return end
+
+                            local standPos = currentTargetPoint + Vector3.new(0, heightOffset, 0)
+                            local distToMat = (hrp.Position - standPos).Magnitude
+
+                            if distToMat > 15 then
+                                if not currentFlyTween or targetEnemy ~= (selectedMaterialTarget .. "_" .. currentMatPointIndex) then
+                                    targetEnemy = selectedMaterialTarget .. "_" .. currentMatPointIndex
+                                    if currentFlyTween then currentFlyTween:Cancel() end
+                                    currentFlyTween = TweenService:Create(hrp, TweenInfo.new(distToMat / flySpeed, Enum.EasingStyle.Linear), {CFrame = CFrame.new(standPos)})
+                                    currentFlyTween:Play()
+                                    do local tw = currentFlyTween; tw.Completed:Connect(function() if currentFlyTween == tw then currentFlyTween = nil end end) end
+                                end
+                            else
+                                if currentFlyTween then currentFlyTween:Cancel(); currentFlyTween = nil end
+                                hrp.CFrame = CFrame.new(standPos)
+
+                                if tick() - lastPointSwitchTime > 2.5 then
+                                    lastPointSwitchTime = tick()
+                                    currentMatPointIndex = (currentMatPointIndex % #matPosList) + 1
+                                end
+                            end
+                        end
+                    end
+                end
+            end)
+        end
+    end
+end)
+-- VÒNG LẶP AUTO FARM CHÍNH
+task.spawn(function()
+    while true do
+        task.wait()
+        if autoFarmEnabled then
+            pcall(function()
+                equipSelectedWeapon()
+                local character = LocalPlayer.Character
+                if character and character:FindFirstChild("HumanoidRootPart") then
+                    local hrp = character.HumanoidRootPart
+                    
+                    if selectedFarmTarget == "Auto Level" then
+                        if autoQuestEnabled and not ClaimQuest() then
+                            return -- đang nhận quest, đợi xong mới đi farm
+                        end
+                    elseif selectedFarmTarget == "Cake Prince" and isCakePrinceReady then
+                        local commF = ReplicatedStorage:FindFirstChild("Remotes") and ReplicatedStorage.Remotes:FindFirstChild("CommF_")
+                        if commF then
+                            commF:InvokeServer("CakePrinceSpawner")
+                        end
+                    elseif selectedFarmTarget == "Bones" then
+                        if autoQuestEnabled and World3 and not ClaimBonesQuest() then
+                            return
+                        end
+                    end
+
+                    local enemy = getTargetEnemy()
+                    local heightOffset = (farmDistanceHeight and farmDistanceHeight > 0) and farmDistanceHeight or 35
+                    if enemy and enemy:FindFirstChild("HumanoidRootPart") and Q.enterIfNeeded(hrp, enemy.HumanoidRootPart.Position) then return end
+                    
+                    if enemy and enemy:FindFirstChild("HumanoidRootPart") then
+                        local enemyHrp = enemy.HumanoidRootPart
+
+                        local targetPos = enemyHrp.Position + Vector3.new(0, heightOffset, 0)
+                        local _, yaw, _ = enemyHrp.CFrame:ToOrientation()
+                        local targetCFrame = CFrame.new(targetPos) * CFrame.fromOrientation(0, yaw, 0)
+                        local distance = (hrp.Position - targetPos).Magnitude
+                        
+                        if distance > 100 then
+                            if not currentFlyTween or targetEnemy ~= enemy then
+                                targetEnemy = enemy
+                                if currentFlyTween then currentFlyTween:Cancel() end
+                                currentFlyTween = TweenService:Create(hrp, TweenInfo.new(distance / flySpeed, Enum.EasingStyle.Linear), {CFrame = targetCFrame})
+                                currentFlyTween:Play()
+                                do local tw = currentFlyTween; tw.Completed:Connect(function() if currentFlyTween == tw then currentFlyTween = nil end end) end
+                            end
+                        else
+                            if currentFlyTween then currentFlyTween:Cancel(); currentFlyTween = nil end
+                            targetEnemy = enemy
+                            hrp.CFrame = targetCFrame
+                        end
+                    else
+                        local destinationPos = nil
+                        if selectedFarmTarget == "Auto Level" then
+                            local qName, qLevel, qMob, qNpcPos, qMobPos = GetQuestData()
+                            destinationPos = GetQuestMobSpawn(qMob, qMobPos) or qMobPos or qNpcPos
+                        elseif selectedFarmTarget == "Cake Prince" then
+                            if isCakePrinceReady then
+                                destinationPos = CAKE_PRINCE_GATE_POS
+                            else
+                                destinationPos = CAKE_ISLAND_POS
+                            end
+                        elseif selectedFarmTarget == "Bones" then
+                            local _, _, bMobName, _, bMobPos = GetHauntedQuestData()
+                            destinationPos = GetQuestMobSpawn(bMobName, bMobPos) or bMobPos or HAUNTED_CASTLE_POS
+                        elseif selectedFarmTarget == "Farm Boss" and selectedBossTarget ~= "None" then
+                            destinationPos = bossSpawnLocations[selectedBossTarget]
+                        end
+
+                        if destinationPos and Q.enterIfNeeded(hrp, destinationPos) then return end
+                        if destinationPos then
+                            local islandTargetPos = destinationPos + Vector3.new(0, heightOffset, 0)
+                            local distToIsland = (hrp.Position - islandTargetPos).Magnitude
+                            
+                            if distToIsland > 20 then
+                                if not currentFlyTween or targetEnemy ~= selectedFarmTarget then
+                                    targetEnemy = selectedFarmTarget
+                                    if currentFlyTween then currentFlyTween:Cancel() end
+                                    
+                                    currentFlyTween = TweenService:Create(hrp, TweenInfo.new(distToIsland / flySpeed, Enum.EasingStyle.Linear), {CFrame = CFrame.new(islandTargetPos)})
+                                    currentFlyTween:Play()
+                                    
+                                    do local tw = currentFlyTween; tw.Completed:Connect(function() if currentFlyTween == tw then currentFlyTween = nil end end) end
+                                end
+                            else
+                                if currentFlyTween then currentFlyTween:Cancel(); currentFlyTween = nil end
+                                hrp.CFrame = CFrame.new(islandTargetPos)
+                            end
+                        else
+                            targetEnemy = nil
+                            if currentFlyTween then currentFlyTween:Cancel(); currentFlyTween = nil end
+                        end
+                    end
+                end
+            end)
+        else
+            if not autoFarmMaterialEnabled and not autoRaidEnabled and not _G.Dungeon then
+                targetEnemy = nil
+                if currentFlyTween then
+                    currentFlyTween:Cancel()
+                    currentFlyTween = nil
+                end
+            end
+        end
+    end
+end)

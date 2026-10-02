@@ -1,0 +1,1002 @@
+-- Services
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local player = Players.LocalPlayer
+local mouse = player:GetMouse()
+
+-- Tạo ScreenGui chính
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "ModernCoordinateHub"
+screenGui.ResetOnSpawn = false
+screenGui.Parent = player:WaitForChild("PlayerGui")
+
+-- Nút mở/đóng menu chính (Toggle Button siêu đẹp)
+local toggleBtn = Instance.new("TextButton")
+toggleBtn.Size = UDim2.new(0, 140, 0, 42)
+toggleBtn.Position = UDim2.new(0, 25, 0, 25)
+toggleBtn.Text = "📂 Mở Menu Hub"
+toggleBtn.BackgroundColor3 = Color3.fromRGB(35, 35, 45)
+toggleBtn.TextColor3 = Color3.fromRGB(0, 210, 255)
+toggleBtn.TextSize = 14
+toggleBtn.Font = Enum.Font.GothamBold
+toggleBtn.Parent = screenGui
+
+local btnCorner = Instance.new("UICorner")
+btnCorner.CornerRadius = UDim.new(0, 10)
+btnCorner.Parent = toggleBtn
+local btnStroke = Instance.new("UIStroke")
+btnStroke.Color = Color3.fromRGB(0, 170, 255)
+btnStroke.Thickness = 1.5
+btnStroke.Parent = toggleBtn
+
+-- Khung Menu chính (Modern Dark Theme)
+local mainFrame = Instance.new("Frame")
+mainFrame.Size = UDim2.new(0, 300, 0, 480)
+mainFrame.Position = UDim2.new(0, 25, 0, 80)
+mainFrame.BackgroundColor3 = Color3.fromRGB(18, 18, 24)
+mainFrame.BorderSizePixel = 0
+mainFrame.Visible = false
+mainFrame.Parent = screenGui
+
+local frameCorner = Instance.new("UICorner")
+frameCorner.CornerRadius = UDim.new(0, 16)
+frameCorner.Parent = mainFrame
+local frameStroke = Instance.new("UIStroke")
+frameStroke.Color = Color3.fromRGB(45, 45, 65)
+frameStroke.Thickness = 1.5
+frameStroke.Parent = mainFrame
+
+-- Tiêu đề Menu & Thanh kéo (Draggable Header)
+local titleLabel = Instance.new("TextLabel")
+titleLabel.Size = UDim2.new(1, 0, 0, 40)
+titleLabel.Position = UDim2.new(0, 0, 0, 0)
+titleLabel.Text = "✨ MINH HUB VIP ✨"
+titleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+titleLabel.TextSize = 14
+titleLabel.Font = Enum.Font.GothamBold
+titleLabel.BackgroundTransparency = 1
+titleLabel.Parent = mainFrame
+
+-- Thanh chuyển Tab bên trong Menu (2 Tabs sang trọng)
+local tabNavFrame = Instance.new("Frame")
+tabNavFrame.Size = UDim2.new(1, -24, 0, 36)
+tabNavFrame.Position = UDim2.new(0, 12, 0, 42)
+tabNavFrame.BackgroundColor3 = Color3.fromRGB(25, 25, 35)
+tabNavFrame.Parent = mainFrame
+local tabNavCorner = Instance.new("UICorner")
+tabNavCorner.CornerRadius = UDim.new(0, 8)
+tabNavCorner.Parent = tabNavFrame
+
+local tabBtnCoord = Instance.new("TextButton")
+tabBtnCoord.Size = UDim2.new(0.48, 0, 1, 0)
+tabBtnCoord.Position = UDim2.new(0, 0, 0, 0)
+tabBtnCoord.Text = "📍 Tọa Độ"
+tabBtnCoord.BackgroundColor3 = Color3.fromRGB(0, 120, 255)
+tabBtnCoord.TextColor3 = Color3.fromRGB(255, 255, 255)
+tabBtnCoord.TextSize = 13
+tabBtnCoord.Font = Enum.Font.GothamBold
+tabBtnCoord.Parent = tabNavFrame
+local tb1Corner = Instance.new("UICorner")
+tb1Corner.CornerRadius = UDim.new(0, 8)
+tb1Corner.Parent = tabBtnCoord
+
+local tabBtnFly = Instance.new("TextButton")
+tabBtnFly.Size = UDim2.new(0.48, 0, 1, 0)
+tabBtnFly.Position = UDim2.new(0.52, 0, 0, 0)
+tabBtnFly.Text = "✈️ Tính Năng"
+tabBtnFly.BackgroundColor3 = Color3.fromRGB(25, 25, 35)
+tabBtnFly.TextColor3 = Color3.fromRGB(160, 160, 180)
+tabBtnFly.TextSize = 13
+tabBtnFly.Font = Enum.Font.GothamBold
+tabBtnFly.Parent = tabNavFrame
+local tb2Corner = Instance.new("UICorner")
+tb2Corner.CornerRadius = UDim.new(0, 8)
+tb2Corner.Parent = tabBtnFly
+
+
+-- ================= TAB 1 CONTAINER (TỌA ĐỘ) =================
+local coordContainer = Instance.new("ScrollingFrame")
+coordContainer.Size = UDim2.new(1, -24, 1, -95)
+coordContainer.Position = UDim2.new(0, 12, 0, 86)
+coordContainer.BackgroundTransparency = 1
+coordContainer.BorderSizePixel = 0
+coordContainer.CanvasSize = UDim2.new(0, 0, 0, 440)
+coordContainer.ScrollBarThickness = 3
+coordContainer.ScrollBarImageColor3 = Color3.fromRGB(0, 170, 255)
+coordContainer.Visible = true
+coordContainer.Parent = mainFrame
+
+local uiList1 = Instance.new("UIListLayout")
+uiList1.SortOrder = Enum.SortOrder.LayoutOrder
+uiList1.Padding = UDim.new(0, 10)
+uiList1.Parent = coordContainer
+
+-- Phần Tọa Độ Nhân Vật
+local playerBox = Instance.new("Frame")
+playerBox.Size = UDim2.new(1, 0, 0, 100)
+playerBox.BackgroundColor3 = Color3.fromRGB(24, 24, 32)
+playerBox.BorderSizePixel = 0
+playerBox.Parent = coordContainer
+
+local pBoxCorner = Instance.new("UICorner")
+pBoxCorner.CornerRadius = UDim.new(0, 10)
+pBoxCorner.Parent = playerBox
+
+local pTitle = Instance.new("TextLabel")
+pTitle.Size = UDim2.new(1, -16, 0, 28)
+pTitle.Position = UDim2.new(0, 12, 0, 6)
+pTitle.Text = "📍 Tọa Độ Nhân Vật Của Bạn"
+pTitle.TextColor3 = Color3.fromRGB(0, 210, 255)
+pTitle.TextSize = 13
+pTitle.Font = Enum.Font.GothamBold
+pTitle.TextXAlignment = Enum.TextXAlignment.Left
+pTitle.BackgroundTransparency = 1
+pTitle.Parent = playerBox
+
+local playerCoordLabel = Instance.new("TextLabel")
+playerCoordLabel.Size = UDim2.new(1, -24, 0, 60)
+playerCoordLabel.Position = UDim2.new(0, 12, 0, 32)
+playerCoordLabel.Text = "X: 0.00\nY: 0.00\nZ: 0.00"
+playerCoordLabel.TextColor3 = Color3.fromRGB(200, 200, 220)
+playerCoordLabel.TextSize = 12
+playerCoordLabel.Font = Enum.Font.Code
+playerCoordLabel.TextXAlignment = Enum.TextXAlignment.Left
+playerCoordLabel.BackgroundTransparency = 1
+playerCoordLabel.Parent = playerBox
+
+local copyPlayerBtn = Instance.new("TextButton")
+copyPlayerBtn.Size = UDim2.new(1, 0, 0, 38)
+copyPlayerBtn.BackgroundColor3 = Color3.fromRGB(35, 35, 48)
+copyPlayerBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+copyPlayerBtn.Text = "📋 Copy Tọa Độ Của Tôi"
+copyPlayerBtn.TextSize = 13
+copyPlayerBtn.Font = Enum.Font.GothamBold
+copyPlayerBtn.Parent = coordContainer
+local cpCorner = Instance.new("UICorner") cpCorner.CornerRadius = UDim.new(0, 10) cpCorner.Parent = copyPlayerBtn
+
+-- Phần Điểm Đã Chọn & Teleport
+local actionBox = Instance.new("Frame")
+actionBox.Size = UDim2.new(1, 0, 0, 100)
+actionBox.BackgroundColor3 = Color3.fromRGB(24, 24, 32)
+actionBox.BorderSizePixel = 0
+actionBox.Parent = coordContainer
+
+local aBoxCorner = Instance.new("UICorner") aBoxCorner.CornerRadius = UDim.new(0, 10) aBoxCorner.Parent = actionBox
+
+local aTitle = Instance.new("TextLabel")
+aTitle.Size = UDim2.new(1, -16, 0, 28)
+aTitle.Position = UDim2.new(0, 12, 0, 6)
+aTitle.Text = "🎯 Điểm Đã Chọn Trên Màn Hình"
+aTitle.TextColor3 = Color3.fromRGB(0, 210, 255)
+aTitle.TextSize = 13
+aTitle.Font = Enum.Font.GothamBold
+aTitle.TextXAlignment = Enum.TextXAlignment.Left
+aTitle.BackgroundTransparency = 1
+aTitle.Parent = actionBox
+
+local selectedCoordLabel = Instance.new("TextLabel")
+selectedCoordLabel.Size = UDim2.new(1, -24, 0, 60)
+selectedCoordLabel.Position = UDim2.new(0, 12, 0, 32)
+selectedCoordLabel.Text = "Chưa chọn điểm nào."
+selectedCoordLabel.TextColor3 = Color3.fromRGB(200, 200, 220)
+selectedCoordLabel.TextSize = 12
+selectedCoordLabel.Font = Enum.Font.Code
+selectedCoordLabel.TextXAlignment = Enum.TextXAlignment.Left
+selectedCoordLabel.BackgroundTransparency = 1
+selectedCoordLabel.Parent = actionBox
+
+local togglePickBtn = Instance.new("TextButton")
+togglePickBtn.Size = UDim2.new(1, 0, 0, 38)
+togglePickBtn.BackgroundColor3 = Color3.fromRGB(60, 45, 35)
+togglePickBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+togglePickBtn.Text = "🔘 Bật Click Chọn Điểm: TẮT"
+togglePickBtn.TextSize = 13
+togglePickBtn.Font = Enum.Font.GothamBold
+togglePickBtn.Parent = coordContainer
+local tpCorner = Instance.new("UICorner") tpCorner.CornerRadius = UDim.new(0, 10) tpCorner.Parent = togglePickBtn
+
+local copySelectedBtn = Instance.new("TextButton")
+copySelectedBtn.Size = UDim2.new(1, 0, 0, 38)
+copySelectedBtn.BackgroundColor3 = Color3.fromRGB(35, 35, 48)
+copySelectedBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+copySelectedBtn.Text = "📋 Copy Điểm Đã Chọn"
+copySelectedBtn.TextSize = 13
+copySelectedBtn.Font = Enum.Font.GothamBold
+copySelectedBtn.Parent = coordContainer
+local csCorner = Instance.new("UICorner") csCorner.CornerRadius = UDim.new(0, 10) csCorner.Parent = copySelectedBtn
+
+local tpBtn = Instance.new("TextButton")
+tpBtn.Size = UDim2.new(1, 0, 0, 38)
+tpBtn.BackgroundColor3 = Color3.fromRGB(0, 120, 255)
+tpBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+tpBtn.Text = "🚀 Teleport Đến Điểm Đã Chọn"
+tpBtn.TextSize = 13
+tpBtn.Font = Enum.Font.GothamBold
+tpBtn.Parent = coordContainer
+local tCorner = Instance.new("UICorner") tCorner.CornerRadius = UDim.new(0, 10) tCorner.Parent = tpBtn
+
+
+-- ================= TAB 2 CONTAINER (TÍNH NĂNG) =================
+local flyContainer = Instance.new("ScrollingFrame")
+flyContainer.Size = UDim2.new(1, -24, 1, -95)
+flyContainer.Position = UDim2.new(0, 12, 0, 86)
+flyContainer.BackgroundTransparency = 1
+flyContainer.BorderSizePixel = 0
+flyContainer.CanvasSize = UDim2.new(0, 0, 0, 750)
+flyContainer.ScrollBarThickness = 3
+flyContainer.ScrollBarImageColor3 = Color3.fromRGB(0, 170, 255)
+flyContainer.Visible = false
+flyContainer.Parent = mainFrame
+
+local uiList2 = Instance.new("UIListLayout")
+uiList2.SortOrder = Enum.SortOrder.LayoutOrder
+uiList2.Padding = UDim.new(0, 10)
+uiList2.Parent = flyContainer
+
+-- Nút Bật/Tắt Fly
+local toggleFlyBtn = Instance.new("TextButton")
+toggleFlyBtn.Size = UDim2.new(1, 0, 0, 42)
+toggleFlyBtn.BackgroundColor3 = Color3.fromRGB(24, 24, 32)
+toggleFlyBtn.TextColor3 = Color3.fromRGB(220, 220, 240)
+toggleFlyBtn.Text = "✈️  Bật Fly (Bay): TẮT"
+toggleFlyBtn.TextSize = 13
+toggleFlyBtn.Font = Enum.Font.GothamBold
+toggleFlyBtn.Parent = flyContainer
+local flyBtnCorner = Instance.new("UICorner") flyBtnCorner.CornerRadius = UDim.new(0, 10) flyBtnCorner.Parent = toggleFlyBtn
+local flyStroke = Instance.new("UIStroke") flyStroke.Color = Color3.fromRGB(45, 45, 60) flyStroke.Thickness = 1.2 flyStroke.Parent = toggleFlyBtn
+
+-- Nút Bật/Tắt Xuyên Tường (Noclip)
+local toggleNoclipBtn = Instance.new("TextButton")
+toggleNoclipBtn.Size = UDim2.new(1, 0, 0, 42)
+toggleNoclipBtn.BackgroundColor3 = Color3.fromRGB(24, 24, 32)
+toggleNoclipBtn.TextColor3 = Color3.fromRGB(220, 220, 240)
+toggleNoclipBtn.Text = "👻  Xuyên Tường (Noclip): TẮT"
+toggleNoclipBtn.TextSize = 13
+toggleNoclipBtn.Font = Enum.Font.GothamBold
+toggleNoclipBtn.Parent = flyContainer
+local noclipCorner = Instance.new("UICorner") noclipCorner.CornerRadius = UDim.new(0, 10) noclipCorner.Parent = toggleNoclipBtn
+local noclipStroke = Instance.new("UIStroke") noclipStroke.Color = Color3.fromRGB(45, 45, 60) noclipStroke.Thickness = 1.2 noclipStroke.Parent = toggleNoclipBtn
+
+-- Nút Bật/Tắt Đứng Trên Không (Air Walk)
+local toggleAirWalkBtn = Instance.new("TextButton")
+toggleAirWalkBtn.Size = UDim2.new(1, 0, 0, 42)
+toggleAirWalkBtn.BackgroundColor3 = Color3.fromRGB(24, 24, 32)
+toggleAirWalkBtn.TextColor3 = Color3.fromRGB(220, 220, 240)
+toggleAirWalkBtn.Text = "🧊  Đứng Trên Không (Di Chuyển): TẮT"
+toggleAirWalkBtn.TextSize = 13
+toggleAirWalkBtn.Font = Enum.Font.GothamBold
+toggleAirWalkBtn.Parent = flyContainer
+local airWalkCorner = Instance.new("UICorner") airWalkCorner.CornerRadius = UDim.new(0, 10) airWalkCorner.Parent = toggleAirWalkBtn
+local airStroke = Instance.new("UIStroke") airStroke.Color = Color3.fromRGB(45, 45, 60) airStroke.Thickness = 1.2 airStroke.Parent = toggleAirWalkBtn
+
+-- Nút Bật/Tắt Đứng Trên Mặt Nước (Water Walk)
+local toggleWaterWalkBtn = Instance.new("TextButton")
+toggleWaterWalkBtn.Size = UDim2.new(1, 0, 0, 42)
+toggleWaterWalkBtn.BackgroundColor3 = Color3.fromRGB(24, 24, 32)
+toggleWaterWalkBtn.TextColor3 = Color3.fromRGB(220, 220, 240)
+toggleWaterWalkBtn.Text = "💧  Đứng Trên Mặt Nước (Y: -0.49): TẮT"
+toggleWaterWalkBtn.TextSize = 13
+toggleWaterWalkBtn.Font = Enum.Font.GothamBold
+toggleWaterWalkBtn.Parent = flyContainer
+local waterWalkCorner = Instance.new("UICorner") waterWalkCorner.CornerRadius = UDim.new(0, 10) waterWalkCorner.Parent = toggleWaterWalkBtn
+local waterStroke = Instance.new("UIStroke") waterStroke.Color = Color3.fromRGB(45, 45, 60) waterStroke.Thickness = 1.2 waterStroke.Parent = toggleWaterWalkBtn
+
+-- Nút Bật/Tắt Speed Hack
+local toggleSpeedHackBtn = Instance.new("TextButton")
+toggleSpeedHackBtn.Size = UDim2.new(1, 0, 0, 42)
+toggleSpeedHackBtn.BackgroundColor3 = Color3.fromRGB(24, 24, 32)
+toggleSpeedHackBtn.TextColor3 = Color3.fromRGB(220, 220, 240)
+toggleSpeedHackBtn.Text = "⚡  Speed Hack (Chạy Nhanh): TẮT"
+toggleSpeedHackBtn.TextSize = 13
+toggleSpeedHackBtn.Font = Enum.Font.GothamBold
+toggleSpeedHackBtn.Parent = flyContainer
+local speedHackCorner = Instance.new("UICorner") speedHackCorner.CornerRadius = UDim.new(0, 10) speedHackCorner.Parent = toggleSpeedHackBtn
+local speedHackStroke = Instance.new("UIStroke") speedHackStroke.Color = Color3.fromRGB(45, 45, 60) speedHackStroke.Thickness = 1.2 speedHackStroke.Parent = toggleSpeedHackBtn
+
+-- Cài đặt Tốc độ Chạy (WalkSpeed Settings Box)
+local speedBox = Instance.new("Frame")
+speedBox.Size = UDim2.new(1, 0, 0, 155)
+speedBox.BackgroundColor3 = Color3.fromRGB(24, 24, 32)
+speedBox.BorderSizePixel = 0
+speedBox.Parent = flyContainer
+local sBoxCorner = Instance.new("UICorner") sBoxCorner.CornerRadius = UDim.new(0, 10) sBoxCorner.Parent = speedBox
+local sBoxStroke = Instance.new("UIStroke") sBoxStroke.Color = Color3.fromRGB(45, 45, 60) sBoxStroke.Thickness = 1.2 sBoxStroke.Parent = speedBox
+
+local sTitle = Instance.new("TextLabel")
+sTitle.Size = UDim2.new(1, -16, 0, 25)
+sTitle.Position = UDim2.new(0, 12, 0, 8)
+sTitle.Text = "🏃‍♂️  Tốc Độ Chạy (WalkSpeed)"
+sTitle.TextColor3 = Color3.fromRGB(0, 210, 255)
+sTitle.TextSize = 13
+sTitle.Font = Enum.Font.GothamBold
+sTitle.TextXAlignment = Enum.TextXAlignment.Left
+sTitle.BackgroundTransparency = 1
+sTitle.Parent = speedBox
+
+local speed16Btn = Instance.new("TextButton")
+speed16Btn.Size = UDim2.new(0.48, -4, 0, 32)
+speed16Btn.Position = UDim2.new(0, 12, 0, 38)
+speed16Btn.BackgroundColor3 = Color3.fromRGB(35, 35, 48)
+speed16Btn.TextColor3 = Color3.fromRGB(220, 220, 240)
+speed16Btn.Text = "Thường (16)"
+speed16Btn.TextSize = 12
+speed16Btn.Font = Enum.Font.GothamBold
+speed16Btn.Parent = speedBox
+local s1c = Instance.new("UICorner") s1c.CornerRadius = UDim.new(0,8) s1c.Parent = speed16Btn
+
+local speed50Btn = Instance.new("TextButton")
+speed50Btn.Size = UDim2.new(0.48, -4, 0, 32)
+speed50Btn.Position = UDim2.new(0.52, 0, 0, 38)
+speed50Btn.BackgroundColor3 = Color3.fromRGB(35, 35, 48)
+speed50Btn.TextColor3 = Color3.fromRGB(220, 220, 240)
+speed50Btn.Text = "Nhanh (50)"
+speed50Btn.TextSize = 12
+speed50Btn.Font = Enum.Font.GothamBold
+speed50Btn.Parent = speedBox
+local s2c = Instance.new("UICorner") s2c.CornerRadius = UDim.new(0,8) s2c.Parent = speed50Btn
+
+local speed100Btn = Instance.new("TextButton")
+speed100Btn.Size = UDim2.new(1, -24, 0, 32)
+speed100Btn.Position = UDim2.new(0, 12, 0, 75)
+speed100Btn.BackgroundColor3 = Color3.fromRGB(35, 35, 48)
+speed100Btn.TextColor3 = Color3.fromRGB(220, 220, 240)
+speed100Btn.Text = "Siêu Tốc (100)"
+speed100Btn.TextSize = 12
+speed100Btn.Font = Enum.Font.GothamBold
+speed100Btn.Parent = speedBox
+local s3c = Instance.new("UICorner") s3c.CornerRadius = UDim.new(0,8) s3c.Parent = speed100Btn
+
+local customSpeedInput = Instance.new("TextBox")
+customSpeedInput.Size = UDim2.new(0.65, -16, 0, 32)
+customSpeedInput.Position = UDim2.new(0, 12, 0, 112)
+customSpeedInput.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
+customSpeedInput.TextColor3 = Color3.fromRGB(255, 255, 255)
+customSpeedInput.PlaceholderText = "Tốc độ..."
+customSpeedInput.Text = "50"
+customSpeedInput.TextSize = 12
+customSpeedInput.Font = Enum.Font.GothamBold
+customSpeedInput.Parent = speedBox
+local csiCorner = Instance.new("UICorner") csiCorner.CornerRadius = UDim.new(0,8) csiCorner.Parent = customSpeedInput
+local csiStroke = Instance.new("UIStroke") csiStroke.Color = Color3.fromRGB(50, 50, 70) csiStroke.Thickness = 1 csiStroke.Parent = customSpeedInput
+
+local applySpeedBtn = Instance.new("TextButton")
+applySpeedBtn.Size = UDim2.new(0.32, -4, 0, 32)
+applySpeedBtn.Position = UDim2.new(0.68, 0, 0, 112)
+applySpeedBtn.BackgroundColor3 = Color3.fromRGB(0, 120, 255)
+applySpeedBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+applySpeedBtn.Text = "Áp Dụng"
+applySpeedBtn.TextSize = 12
+applySpeedBtn.Font = Enum.Font.GothamBold
+applySpeedBtn.Parent = speedBox
+local asbCorner = Instance.new("UICorner") asbCorner.CornerRadius = UDim.new(0,8) asbCorner.Parent = applySpeedBtn
+
+-- Cài đặt Tốc độ Bay (FlySpeed)
+local flySpeedBox = Instance.new("Frame")
+flySpeedBox.Size = UDim2.new(1, 0, 0, 155)
+flySpeedBox.BackgroundColor3 = Color3.fromRGB(24, 24, 32)
+flySpeedBox.BorderSizePixel = 0
+flySpeedBox.Parent = flyContainer
+local fsBoxCorner = Instance.new("UICorner") fsBoxCorner.CornerRadius = UDim.new(0, 10) fsBoxCorner.Parent = flySpeedBox
+local fsBoxStroke = Instance.new("UIStroke") fsBoxStroke.Color = Color3.fromRGB(45, 45, 60) fsBoxStroke.Thickness = 1.2 fsBoxStroke.Parent = flySpeedBox
+
+local fsTitle = Instance.new("TextLabel")
+fsTitle.Size = UDim2.new(1, -16, 0, 25)
+fsTitle.Position = UDim2.new(0, 12, 0, 8)
+fsTitle.Text = "🚀  Tốc Độ Bay (FlySpeed)"
+fsTitle.TextColor3 = Color3.fromRGB(0, 210, 255)
+fsTitle.TextSize = 13
+fsTitle.Font = Enum.Font.GothamBold
+fsTitle.TextXAlignment = Enum.TextXAlignment.Left
+fsTitle.BackgroundTransparency = 1
+fsTitle.Parent = flySpeedBox
+
+local fly100Btn = Instance.new("TextButton")
+fly100Btn.Size = UDim2.new(0.48, -4, 0, 32)
+fly100Btn.Position = UDim2.new(0, 12, 0, 38)
+fly100Btn.BackgroundColor3 = Color3.fromRGB(35, 35, 48)
+fly100Btn.TextColor3 = Color3.fromRGB(220, 220, 240)
+fly100Btn.Text = "Thường (100)"
+fly100Btn.TextSize = 12
+fly100Btn.Font = Enum.Font.GothamBold
+fly100Btn.Parent = flySpeedBox
+local f1c = Instance.new("UICorner") f1c.CornerRadius = UDim.new(0,8) f1c.Parent = fly100Btn
+
+local fly300Btn = Instance.new("TextButton")
+fly300Btn.Size = UDim2.new(0.48, -4, 0, 32)
+fly300Btn.Position = UDim2.new(0.52, 0, 0, 38)
+fly300Btn.BackgroundColor3 = Color3.fromRGB(35, 35, 48)
+fly300Btn.TextColor3 = Color3.fromRGB(220, 220, 240)
+fly300Btn.Text = "Nhanh (300)"
+fly300Btn.TextSize = 12
+fly300Btn.Font = Enum.Font.GothamBold
+fly300Btn.Parent = flySpeedBox
+local f2c = Instance.new("UICorner") f2c.CornerRadius = UDim.new(0,8) f2c.Parent = fly300Btn
+
+local fly600Btn = Instance.new("TextButton")
+fly600Btn.Size = UDim2.new(1, -24, 0, 32)
+fly600Btn.Position = UDim2.new(0, 12, 0, 75)
+fly600Btn.BackgroundColor3 = Color3.fromRGB(35, 35, 48)
+fly600Btn.TextColor3 = Color3.fromRGB(220, 220, 240)
+fly600Btn.Text = "Siêu Tốc (600)"
+fly600Btn.TextSize = 12
+fly600Btn.Font = Enum.Font.GothamBold
+fly600Btn.Parent = flySpeedBox
+local f3c = Instance.new("UICorner") f3c.CornerRadius = UDim.new(0,8) f3c.Parent = fly600Btn
+
+local customFlyInput = Instance.new("TextBox")
+customFlyInput.Size = UDim2.new(0.65, -16, 0, 32)
+customFlyInput.Position = UDim2.new(0, 12, 0, 112)
+customFlyInput.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
+customFlyInput.TextColor3 = Color3.fromRGB(255, 255, 255)
+customFlyInput.PlaceholderText = "Tốc độ bay..."
+customFlyInput.Text = "300"
+customFlyInput.TextSize = 12
+customFlyInput.Font = Enum.Font.GothamBold
+customFlyInput.Parent = flySpeedBox
+local cfiCorner = Instance.new("UICorner") cfiCorner.CornerRadius = UDim.new(0,8) cfiCorner.Parent = customFlyInput
+local cfiStroke = Instance.new("UIStroke") cfiStroke.Color = Color3.fromRGB(50, 50, 70) cfiStroke.Thickness = 1 cfiStroke.Parent = customFlyInput
+
+local applyFlyBtn = Instance.new("TextButton")
+applyFlyBtn.Size = UDim2.new(0.32, -4, 0, 32)
+applyFlyBtn.Position = UDim2.new(0.68, 0, 0, 112)
+applyFlyBtn.BackgroundColor3 = Color3.fromRGB(0, 120, 255)
+applyFlyBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+applyFlyBtn.Text = "Áp Dụng"
+applyFlyBtn.TextSize = 12
+applyFlyBtn.Font = Enum.Font.GothamBold
+applyFlyBtn.Parent = flySpeedBox
+local afbCorner = Instance.new("UICorner") afbCorner.CornerRadius = UDim.new(0,8) afbCorner.Parent = applyFlyBtn
+
+-- Cài đặt Fix Lag / Xóa hiệu ứng tối ưu FPS
+local lagBox = Instance.new("Frame")
+lagBox.Size = UDim2.new(1, 0, 0, 115)
+lagBox.BackgroundColor3 = Color3.fromRGB(24, 24, 32)
+lagBox.BorderSizePixel = 0
+lagBox.Parent = flyContainer
+local lBoxCorner = Instance.new("UICorner") lBoxCorner.CornerRadius = UDim.new(0, 10) lBoxCorner.Parent = lagBox
+local lBoxStroke = Instance.new("UIStroke") lBoxStroke.Color = Color3.fromRGB(45, 45, 60) lBoxStroke.Thickness = 1.2 lBoxStroke.Parent = lagBox
+
+local lTitle = Instance.new("TextLabel")
+lTitle.Size = UDim2.new(1, -16, 0, 25)
+lTitle.Position = UDim2.new(0, 12, 0, 8)
+lTitle.Text = "🛠️  Xóa Hiệu Ứng & Fix Lag"
+lTitle.TextColor3 = Color3.fromRGB(0, 210, 255)
+lTitle.TextSize = 13
+lTitle.Font = Enum.Font.GothamBold
+lTitle.TextXAlignment = Enum.TextXAlignment.Left
+lTitle.BackgroundTransparency = 1
+lTitle.Parent = lagBox
+
+local fixLagBtn = Instance.new("TextButton")
+fixLagBtn.Size = UDim2.new(1, -24, 0, 35)
+fixLagBtn.Position = UDim2.new(0, 12, 0, 38)
+fixLagBtn.BackgroundColor3 = Color3.fromRGB(220, 50, 50)
+fixLagBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+fixLagBtn.Text = "🗑️ Xóa Hiệu Ứng & Tối Ưu Ngay"
+fixLagBtn.TextSize = 12
+fixLagBtn.Font = Enum.Font.GothamBold
+fixLagBtn.Parent = lagBox
+local flbCorner = Instance.new("UICorner") flbCorner.CornerRadius = UDim.new(0,8) flbCorner.Parent = fixLagBtn
+
+local lagStatusLabel = Instance.new("TextLabel")
+lagStatusLabel.Size = UDim2.new(1, -24, 0, 25)
+lagStatusLabel.Position = UDim2.new(0, 12, 0, 78)
+lagStatusLabel.Text = "Trạng thái: Chưa xóa"
+lagStatusLabel.TextColor3 = Color3.fromRGB(180, 180, 180)
+lagStatusLabel.TextSize = 11
+lagStatusLabel.Font = Enum.Font.Gotham
+lagStatusLabel.TextXAlignment = Enum.TextXAlignment.Left
+lagStatusLabel.BackgroundTransparency = 1
+lagStatusLabel.Parent = lagBox
+
+
+-- ================= CHUYỂN TAB LOGIC =================
+tabBtnCoord.MouseButton1Click:Connect(function()
+	coordContainer.Visible = true
+	flyContainer.Visible = false
+	tabBtnCoord.BackgroundColor3 = Color3.fromRGB(0, 120, 255)
+	tabBtnCoord.TextColor3 = Color3.fromRGB(255, 255, 255)
+	tabBtnFly.BackgroundColor3 = Color3.fromRGB(25, 25, 35)
+	tabBtnFly.TextColor3 = Color3.fromRGB(160, 160, 180)
+end)
+
+tabBtnFly.MouseButton1Click:Connect(function()
+	coordContainer.Visible = false
+	flyContainer.Visible = true
+	tabBtnFly.BackgroundColor3 = Color3.fromRGB(0, 120, 255)
+	tabBtnFly.TextColor3 = Color3.fromRGB(255, 255, 255)
+	tabBtnCoord.BackgroundColor3 = Color3.fromRGB(25, 25, 35)
+	tabBtnCoord.TextColor3 = Color3.fromRGB(160, 160, 180)
+end)
+
+
+-- ================= TÍNH NĂNG KÉO / DI CHUYỂN (DRAG SYSTEM) =================
+local dragging, dragInput, dragStart, startPos
+
+titleLabel.InputBegan:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+		dragging = true
+		dragStart = input.Position
+		startPos = mainFrame.Position
+		input.Changed:Connect(function()
+			if input.UserInputState == Enum.UserInputState.End then
+				dragging = false
+			end
+		end)
+	end
+end)
+
+titleLabel.InputChanged:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+		dragInput = input
+	end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+	if input == dragInput and dragging then
+		local delta = input.Position - dragStart
+		mainFrame.Position = UDim2.new(
+			startPos.X.Scale, 
+			startPos.X.Offset + delta.X, 
+			startPos.Y.Scale, 
+			startPos.Y.Offset + delta.Y
+		)
+	end
+end)
+
+
+-- ================= LOGIC CHỨC NĂNG TỌA ĐỘ =================
+toggleBtn.MouseButton1Click:Connect(function()
+	mainFrame.Visible = not mainFrame.Visible
+	if mainFrame.Visible then
+		toggleBtn.Text = "❌ Đóng Menu"
+		toggleBtn.BackgroundColor3 = Color3.fromRGB(180, 40, 40)
+		btnStroke.Color = Color3.fromRGB(255, 50, 50)
+	else
+		toggleBtn.Text = "📂 Mở Menu Hub"
+		toggleBtn.BackgroundColor3 = Color3.fromRGB(35, 35, 45)
+		btnStroke.Color = Color3.fromRGB(0, 170, 255)
+	end
+end)
+
+local isPicking = false
+local selectedPos = Vector3.new(0, 0, 0)
+
+togglePickBtn.MouseButton1Click:Connect(function()
+	isPicking = not isPicking
+	if isPicking then
+		togglePickBtn.Text = "🔘 Bật Click Chọn Điểm: BẬT"
+		togglePickBtn.BackgroundColor3 = Color3.fromRGB(30, 130, 60)
+	else
+		togglePickBtn.Text = "🔘 Bật Click Chọn Điểm: TẮT"
+		togglePickBtn.BackgroundColor3 = Color3.fromRGB(60, 45, 35)
+	end
+end)
+
+mouse.Button1Down:Connect(function()
+	if isPicking and mouse.Hit then
+		selectedPos = mouse.Hit.Position
+		selectedCoordLabel.Text = string.format("X: %.2f\nY: %.2f\nZ: %.2f", selectedPos.X, selectedPos.Y, selectedPos.Z)
+	end
+end)
+
+copyPlayerBtn.MouseButton1Click:Connect(function()
+	if player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
+		local pos = player.Character.HumanoidRootPart.Position
+		local text = string.format("%.2f, %.2f, %.2f", pos.X, pos.Y, pos.Z)
+		if setclipboard then setclipboard(text) end
+	end
+end)
+
+copySelectedBtn.MouseButton1Click:Connect(function()
+	local text = string.format("%.2f, %.2f, %.2f", selectedPos.X, selectedPos.Y, selectedPos.Z)
+	if setclipboard then setclipboard(text) end
+end)
+
+tpBtn.MouseButton1Click:Connect(function()
+	if player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
+		local targetPos = selectedPos + Vector3.new(0, 3, 0)
+		player.Character.HumanoidRootPart.CFrame = CFrame.new(targetPos)
+	end
+end)
+
+
+-- ================= LOGIC XÓA HIỆU ỨNG & FIX LAG =================
+fixLagBtn.MouseButton1Click:Connect(function()
+	local lighting = game:GetService("Lighting")
+	local terrain = workspace:FindFirstChildOfClass("Terrain")
+
+	for _, v in ipairs(lighting:GetChildren()) do
+		if v:IsA("PostEffect") or v:IsA("Sky") or v:IsA("Atmosphere") or v:IsA("Clouds") then
+			pcall(function() v:Destroy() end)
+		end
+	end
+
+	lighting.GlobalShadows = false
+	lighting.FogEnd = 9e9
+	pcall(function()
+		lighting.Brightness = 1
+	end)
+
+	if terrain then
+		pcall(function()
+			terrain.WaterWaveSize = 0
+			terrain.WaterWaveTransparency = 0
+			terrain.WaterReflectance = 0
+			terrain.WaterTransparency = 0
+		end)
+	end
+
+	for _, v in ipairs(workspace:GetDescendants()) do
+		pcall(function()
+			if v:IsA("BasePart") then
+				v.Material = Enum.Material.SmoothPlastic
+				v.Reflectance = 0
+			elseif v:IsA("ParticleEmitter") or v:IsA("Trail") or v:IsA("Beam") or v:IsA("Fire") or v:IsA("Smoke") or v:IsA("Sparkles") or v:IsA("Decal") or v:IsA("Texture") or v:IsA("Explosion") then
+				v:Destroy()
+			end
+		end)
+	end
+
+	lagStatusLabel.Text = "Trạng thái: Đã tối ưu xong! ✅"
+	lagStatusLabel.TextColor3 = Color3.fromRGB(50, 220, 100)
+end)
+
+
+-- ================= LOGIC FLY, SPEED HACK, AIR WALK, WATER WALK & NOCLIP =================
+local flying = false
+local noclips = false
+local airWalking = false
+local waterWalking = false
+local speedHack = false
+local flySpeed = 300
+local customWalkSpeed = 50
+
+local bodyVel, bodyGyro
+local airWalkVel, airWalkGyro
+local waterWalkVel, waterWalkGyro
+local keysDown = {W = false, A = false, S = false, D = false, Space = false, Shift = false}
+
+UserInputService.InputBegan:Connect(function(input, gpe)
+	if input.KeyCode == Enum.KeyCode.W then keysDown.W = true
+	elseif input.KeyCode == Enum.KeyCode.A then keysDown.A = true
+	elseif input.KeyCode == Enum.KeyCode.S then keysDown.S = true
+	elseif input.KeyCode == Enum.KeyCode.D then keysDown.D = true
+	elseif input.KeyCode == Enum.KeyCode.Space then keysDown.Space = true
+	elseif input.KeyCode == Enum.KeyCode.LeftShift or input.KeyCode == Enum.KeyCode.RightShift then keysDown.Shift = true
+	end
+end)
+
+UserInputService.InputEnded:Connect(function(input)
+	if input.KeyCode == Enum.KeyCode.W then keysDown.W = false
+	elseif input.KeyCode == Enum.KeyCode.A then keysDown.A = false
+	elseif input.KeyCode == Enum.KeyCode.S then keysDown.S = false
+	elseif input.KeyCode == Enum.KeyCode.D then keysDown.D = false
+	elseif input.KeyCode == Enum.KeyCode.Space then keysDown.Space = false
+	elseif input.KeyCode == Enum.KeyCode.LeftShift or input.KeyCode == Enum.KeyCode.RightShift then keysDown.Shift = false
+	end
+end)
+
+player.CharacterAdded:Connect(function(char)
+	flying = false
+	noclips = false
+	airWalking = false
+	waterWalking = false
+	speedHack = false
+	
+	toggleFlyBtn.Text = "✈️  Bật Fly (Bay): TẮT"
+	toggleFlyBtn.BackgroundColor3 = Color3.fromRGB(24, 24, 32)
+	toggleNoclipBtn.Text = "👻  Xuyên Tường (Noclip): TẮT"
+	toggleNoclipBtn.BackgroundColor3 = Color3.fromRGB(24, 24, 32)
+	toggleAirWalkBtn.Text = "🧊  Đứng Trên Không (Di Chuyển): TẮT"
+	toggleAirWalkBtn.BackgroundColor3 = Color3.fromRGB(24, 24, 32)
+	toggleWaterWalkBtn.Text = "💧  Đứng Trên Mặt Nước (Y: -0.49): TẮT"
+	toggleWaterWalkBtn.BackgroundColor3 = Color3.fromRGB(24, 24, 32)
+	toggleSpeedHackBtn.Text = "⚡  Speed Hack (Chạy Nhanh): TẮT"
+	toggleSpeedHackBtn.BackgroundColor3 = Color3.fromRGB(24, 24, 32)
+	
+	local hum = char:WaitForChild("Humanoid", 5)
+	if hum then hum.PlatformStand = false end
+end)
+
+toggleFlyBtn.MouseButton1Click:Connect(function()
+	flying = not flying
+	if flying then
+		if airWalking then
+			airWalking = false
+			toggleAirWalkBtn.Text = "🧊  Đứng Trên Không (Di Chuyển): TẮT"
+			toggleAirWalkBtn.BackgroundColor3 = Color3.fromRGB(24, 24, 32)
+			if airWalkVel then airWalkVel:Destroy() end
+			if airWalkGyro then airWalkGyro:Destroy() end
+		end
+		if waterWalking then
+			waterWalking = false
+			toggleWaterWalkBtn.Text = "💧  Đứng Trên Mặt Nước (Y: -0.49): TẮT"
+			toggleWaterWalkBtn.BackgroundColor3 = Color3.fromRGB(24, 24, 32)
+			if waterWalkVel then waterWalkVel:Destroy() end
+			if waterWalkGyro then waterWalkGyro:Destroy() end
+		end
+	end
+
+	local char = player.Character
+	if not char then return end
+	local hrp = char:FindFirstChild("HumanoidRootPart")
+	local hum = char:FindFirstChildOfClass("Humanoid")
+	if not hrp or not hum then return end
+
+	if flying then
+		toggleFlyBtn.Text = "✈️  Bật Fly (Bay): BẬT"
+		toggleFlyBtn.BackgroundColor3 = Color3.fromRGB(20, 140, 70)
+		hum.PlatformStand = true
+
+		bodyVel = Instance.new("BodyVelocity")
+		bodyVel.Velocity = Vector3.new(0, 0, 0)
+		bodyVel.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
+		bodyVel.Parent = hrp
+
+		bodyGyro = Instance.new("BodyGyro")
+		bodyGyro.MaxTorque = Vector3.new(math.huge, math.huge, math.huge)
+		bodyGyro.CFrame = hrp.CFrame
+		bodyGyro.Parent = hrp
+	else
+		toggleFlyBtn.Text = "✈️  Bật Fly (Bay): TẮT"
+		toggleFlyBtn.BackgroundColor3 = Color3.fromRGB(24, 24, 32)
+		hum.PlatformStand = false
+		if bodyVel then bodyVel:Destroy() end
+		if bodyGyro then bodyGyro:Destroy() end
+	end
+end)
+
+toggleNoclipBtn.MouseButton1Click:Connect(function()
+	noclips = not noclips
+	if noclips then
+		toggleNoclipBtn.Text = "👻  Xuyên Tường (Noclip): BẬT"
+		toggleNoclipBtn.BackgroundColor3 = Color3.fromRGB(20, 140, 70)
+	else
+		toggleNoclipBtn.Text = "👻  Xuyên Tường (Noclip): TẮT"
+		toggleNoclipBtn.BackgroundColor3 = Color3.fromRGB(24, 24, 32)
+	end
+end)
+
+toggleAirWalkBtn.MouseButton1Click:Connect(function()
+	airWalking = not airWalking
+	if airWalking then
+		if flying then
+			flying = false
+			toggleFlyBtn.Text = "✈️  Bật Fly (Bay): TẮT"
+			toggleFlyBtn.BackgroundColor3 = Color3.fromRGB(24, 24, 32)
+			if bodyVel then bodyVel:Destroy() end
+			if bodyGyro then bodyGyro:Destroy() end
+		end
+		if waterWalking then
+			waterWalking = false
+			toggleWaterWalkBtn.Text = "💧  Đứng Trên Mặt Nước (Y: -0.49): TẮT"
+			toggleWaterWalkBtn.BackgroundColor3 = Color3.fromRGB(24, 24, 32)
+			if waterWalkVel then waterWalkVel:Destroy() end
+			if waterWalkGyro then waterWalkGyro:Destroy() end
+		end
+		local hum = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+		if hum then hum.PlatformStand = false end
+	end
+
+	local char = player.Character
+	if not char then return end
+	local hrp = char:FindFirstChild("HumanoidRootPart")
+	if not hrp then return end
+
+	if airWalking then
+		toggleAirWalkBtn.Text = "🧊  Đứng Trên Không (Di Chuyển): BẬT"
+		toggleAirWalkBtn.BackgroundColor3 = Color3.fromRGB(20, 140, 70)
+
+		airWalkVel = Instance.new("BodyVelocity")
+		airWalkVel.Velocity = Vector3.new(0, 0, 0)
+		airWalkVel.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
+		airWalkVel.Parent = hrp
+
+		airWalkGyro = Instance.new("BodyGyro")
+		airWalkGyro.MaxTorque = Vector3.new(math.huge, math.huge, 0)
+		airWalkGyro.CFrame = hrp.CFrame
+		airWalkGyro.Parent = hrp
+	else
+		toggleAirWalkBtn.Text = "🧊  Đứng Trên Không (Di Chuyển): TẮT"
+		toggleAirWalkBtn.BackgroundColor3 = Color3.fromRGB(24, 24, 32)
+		if airWalkVel then airWalkVel:Destroy() end
+		if airWalkGyro then airWalkGyro:Destroy() end
+	end
+end)
+
+toggleWaterWalkBtn.MouseButton1Click:Connect(function()
+	waterWalking = not waterWalking
+	if waterWalking then
+		if flying then
+			flying = false
+			toggleFlyBtn.Text = "✈️  Bật Fly (Bay): TẮT"
+			toggleFlyBtn.BackgroundColor3 = Color3.fromRGB(24, 24, 32)
+			if bodyVel then bodyVel:Destroy() end
+			if bodyGyro then bodyGyro:Destroy() end
+		end
+		if airWalking then
+			airWalking = false
+			toggleAirWalkBtn.Text = "🧊  Đứng Trên Không (Di Chuyển): TẮT"
+			toggleAirWalkBtn.BackgroundColor3 = Color3.fromRGB(24, 24, 32)
+			if airWalkVel then airWalkVel:Destroy() end
+			if airWalkGyro then airWalkGyro:Destroy() end
+		end
+		local hum = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+		if hum then hum.PlatformStand = false end
+	end
+
+	local char = player.Character
+	if not char then return end
+	local hrp = char:FindFirstChild("HumanoidRootPart")
+	if not hrp then return end
+
+	if waterWalking then
+		toggleWaterWalkBtn.Text = "💧  Đứng Trên Mặt Nước (Y: -0.49): BẬT"
+		toggleWaterWalkBtn.BackgroundColor3 = Color3.fromRGB(20, 140, 70)
+
+		waterWalkVel = Instance.new("BodyVelocity")
+		waterWalkVel.Velocity = Vector3.new(0, 0, 0)
+		waterWalkVel.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
+		waterWalkVel.Parent = hrp
+
+		waterWalkGyro = Instance.new("BodyGyro")
+		waterWalkGyro.MaxTorque = Vector3.new(math.huge, math.huge, 0)
+		waterWalkGyro.CFrame = hrp.CFrame
+		waterWalkGyro.Parent = hrp
+	else
+		toggleWaterWalkBtn.Text = "💧  Đứng Trên Mặt Nước (Y: -0.49): TẮT"
+		toggleWaterWalkBtn.BackgroundColor3 = Color3.fromRGB(24, 24, 32)
+		if waterWalkVel then waterWalkVel:Destroy() end
+		if waterWalkGyro then waterWalkGyro:Destroy() end
+	end
+end)
+
+toggleSpeedHackBtn.MouseButton1Click:Connect(function()
+	speedHack = not speedHack
+	if speedHack then
+		toggleSpeedHackBtn.Text = "⚡  Speed Hack (Chạy Nhanh): BẬT"
+		toggleSpeedHackBtn.BackgroundColor3 = Color3.fromRGB(20, 140, 70)
+	else
+		toggleSpeedHackBtn.Text = "⚡  Speed Hack (Chạy Nhanh): TẮT"
+		toggleSpeedHackBtn.BackgroundColor3 = Color3.fromRGB(24, 24, 32)
+		local hum = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+		if hum then hum.WalkSpeed = 16 end
+	end
+end)
+
+speed16Btn.MouseButton1Click:Connect(function()
+	customWalkSpeed = 16
+	customSpeedInput.Text = "16"
+	if speedHack then
+		local hum = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+		if hum then hum.WalkSpeed = 16 end
+	end
+end)
+
+speed50Btn.MouseButton1Click:Connect(function()
+	customWalkSpeed = 50
+	customSpeedInput.Text = "50"
+	if speedHack then
+		local hum = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+		if hum then hum.WalkSpeed = 50 end
+	end
+end)
+
+speed100Btn.MouseButton1Click:Connect(function()
+	customWalkSpeed = 100
+	customSpeedInput.Text = "100"
+	if speedHack then
+		local hum = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+		if hum then hum.WalkSpeed = 100 end
+	end
+end)
+
+applySpeedBtn.MouseButton1Click:Connect(function()
+	local val = tonumber(customSpeedInput.Text)
+	if val then
+		customWalkSpeed = val
+		if speedHack then
+			local hum = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+			if hum then hum.WalkSpeed = val end
+		end
+	end
+end)
+
+fly100Btn.MouseButton1Click:Connect(function()
+	flySpeed = 100
+	customFlyInput.Text = "100"
+end)
+
+fly300Btn.MouseButton1Click:Connect(function()
+	flySpeed = 300
+	customFlyInput.Text = "300"
+end)
+
+fly600Btn.MouseButton1Click:Connect(function()
+	flySpeed = 600
+	customFlyInput.Text = "600"
+end)
+
+applyFlyBtn.MouseButton1Click:Connect(function()
+	local val = tonumber(customFlyInput.Text)
+	if val then
+		flySpeed = val
+	end
+end)
+
+RunService.Stepped:Connect(function()
+	if noclips and player.Character then
+		for _, v in ipairs(player.Character:GetDescendants()) do
+			if v:IsA("BasePart") then
+				v.CanCollide = false
+			end
+		end
+	end
+
+	if speedHack and player.Character then
+		local hum = player.Character:FindFirstChildOfClass("Humanoid")
+		if hum and hum.WalkSpeed ~= customWalkSpeed then
+			hum.WalkSpeed = customWalkSpeed
+		end
+	end
+end)
+
+RunService.RenderStepped:Connect(function()
+	if mainFrame.Visible then
+		if player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
+			local pPos = player.Character.HumanoidRootPart.Position
+			playerCoordLabel.Text = string.format("X: %.2f\nY: %.2f\nZ: %.2f", pPos.X, pPos.Y, pPos.Z)
+		end
+	end
+
+	if flying and player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
+		local cam = workspace.CurrentCamera
+		local velocity = Vector3.new(0, 0, 0)
+		local currentSpeed = keysDown.Shift and (flySpeed * 2) or flySpeed
+
+		local look = cam.CFrame.LookVector
+		local right = cam.CFrame.RightVector
+
+		if keysDown.W then velocity = velocity + look end
+		if keysDown.S then velocity = velocity - look end
+		if keysDown.A then velocity = velocity - right end
+		if keysDown.D then velocity = velocity + right end
+		if keysDown.Space then velocity = velocity + Vector3.new(0, 1, 0) end
+
+		if bodyVel and bodyGyro then
+			bodyVel.Velocity = velocity.Unit.Magnitude > 0 and (velocity.Unit * currentSpeed) or Vector3.new(0, 0, 0)
+			bodyGyro.CFrame = cam.CFrame
+		end
+	end
+
+	if airWalking and player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
+		local hum = player.Character:FindFirstChildOfClass("Humanoid")
+		if hum and airWalkVel then
+			local moveDir = hum.MoveDirection
+			local speed = hum.WalkSpeed
+			airWalkVel.Velocity = Vector3.new(moveDir.X * speed, 0, moveDir.Z * speed)
+		end
+	end
+
+	if waterWalking and player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
+		local hrp = player.Character.HumanoidRootPart
+		local hum = player.Character:FindFirstChildOfClass("Humanoid")
+		if hum and waterWalkVel and waterWalkGyro and waterWalkVel.Parent == hrp then
+			local moveDir = hum.MoveDirection
+			local speed = hum.WalkSpeed
+			
+			local currentPos = hrp.Position
+			local targetY = -0.49
+			local yDiff = targetY - currentPos.Y
+			local yVel = yDiff * 25
+			
+			waterWalkVel.Velocity = Vector3.new(moveDir.X * speed, yVel, moveDir.Z * speed)
+			
+			if moveDir.Magnitude > 0 then
+				waterWalkGyro.CFrame = CFrame.new(currentPos, currentPos + moveDir)
+			end
+		end
+	end
+end)

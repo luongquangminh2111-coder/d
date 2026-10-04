@@ -63,7 +63,10 @@ local bringMobsEnabled        = true
 local maxBringCount           = 6
 local fastAttackEnabled       = true
 local maxAttackTargets        = 2     -- số quái Fast Attack đánh cùng lúc
-local autoHakiEnabled         = true
+local autoHakiEnabled         = true  -- Auto Buso Haki
+local autoObservationEnabled  = true  -- Auto Observation Haki / Instinct
+local observationState        = { char = nil, on = false, lastTry = 0, tries = 0 }
+local ensureObservation       -- khai báo trước để nút bật/tắt trong menu gọi được (định nghĩa ở dưới)
 local walkOnWaterEnabled      = true
 local autoRaceV3Enabled       = true
 local autoRaceV4Enabled       = true
@@ -75,7 +78,16 @@ local autoRandomFruitEnabled  = false  -- Auto mua Random Fruit (Cousin)
 local autoChestEnabled        = false  -- Auto Farm Chest
 
 -- CẤU HÌNH BAY CAO
-local extraFarmHeight    = 55     
+local extraFarmHeight    = 55
+
+-- CẤU HÌNH DI CHUYỂN SUBMERGED ISLAND (SEA 3)
+-- Tách riêng trạng thái vào đảo để Auto Level không bị kẹt ở Tiki Outpost.
+local SUBMERGED_CENTER = Vector3.new(10000, -2050, 9800)
+local SUBMERGED_ENTRY_POS = Vector3.new(10000, -2050, 9800)
+local SUBMERGED_WORKER_POS = Vector3.new(-16269.7041, 25.22885, 1373.65955)
+local submergedTravelBusy = false
+local submergedTravelLast = 0
+local submergedTravelAttempts = 0
 
 -- DANH SÁCH & NGUYÊN LIỆU AUTO FARM MATERIAL
 local selectedMaterialTarget = ""
@@ -146,6 +158,9 @@ _G.AutoBuyChip  = false
 _G.StartRaid    = false
 _G.Dungeon      = false
 _G.AutoLawRaid  = false
+_G.RaidKillAura = true   -- Kill Aura khi farm Raid ở đảo 4-5
+_G.RaidKillAuraIsland = 4  -- từ đảo này trở đi dùng Kill Aura
+_G.RaidKillAuraReset = true  -- true: reset (đặt máu = 0 + BreakJoints) quái Raid; false: chỉ gom & đánh
 
 local autoRaidEnabled       = false
 local autoBuyChipEnabled    = false
@@ -229,15 +244,49 @@ local HAUNTED_CASTLE_POS    = Vector3.new(-9516, 142, 5535)
 local CAKE_ISLAND_POS       = Vector3.new(-2086, 70, -12245)
 local CAKE_PRINCE_GATE_POS  = Vector3.new(-2145.58, 70.01, -12404.92)
 
+-- DANH SÁCH BOSS THEO TỪNG SEA (menu chỉ hiện boss của Sea đang đứng)
+local currentSeaIndex = World1 and 1 or (World2 and 2 or 3)
+
 local seaBosses = {
-    ["Sea 3"] = {
-        "Stone", "Hydra Leader", "Kilo Admiral", "Captain Elephant", 
-        "Beautiful Pirate", "Longma", "Cake Queen", "Cake Prince", 
+    [1] = {
+        "Gorilla King", "Bobby", "Yeti", "Vice Admiral", "Warden", "Chief Warden", "Swan",
+        "Magma Admiral", "Fishman Lord", "Wysper", "Thunder God", "Cyborg", "Saber Expert"
+    },
+    [2] = {
+        "Diamond", "Jeremy", "Don Swan", "Smoke Admiral", "Awakened Ice Admiral", "Tide Keeper"
+    },
+    [3] = {
+        "Stone", "Hydra Leader", "Kilo Admiral", "Captain Elephant",
+        "Beautiful Pirate", "Longma", "Cake Queen", "Cake Prince",
         "Dough King", "rip_indra", "Soul Reaper"
-    }
+    },
 }
 
+-- Toạ độ DỰ PHÒNG. Script ưu tiên lấy điểm hồi sinh thật trong workspace._WorldOrigin.EnemySpawns,
+-- chỉ dùng bảng này khi không tìm thấy.
 local bossSpawnLocations = {
+    -- Sea 1
+    ["Gorilla King"]  = Vector3.new(-1128.83, 40.46, -451.09),
+    ["Bobby"]         = Vector3.new(-1087.30, 46.90, 4040.10),
+    ["Yeti"]          = Vector3.new(1185.00, 106.00, -1518.00),
+    ["Vice Admiral"]  = Vector3.new(-5036.00, 29.00, 4325.00),
+    ["Warden"]        = Vector3.new(5278.00, 2.00, 944.00),
+    ["Chief Warden"]  = Vector3.new(5206.00, 2.00, 814.00),
+    ["Swan"]          = Vector3.new(5325.00, 7.00, 719.00),
+    ["Magma Admiral"] = Vector3.new(-5530.00, 22.00, 8859.00),
+    ["Fishman Lord"]  = Vector3.new(61260.00, 30.00, 1193.00),
+    ["Wysper"]        = Vector3.new(-7927.00, 5551.00, -637.00),
+    ["Thunder God"]   = Vector3.new(-7751.00, 5606.00, -2305.00),
+    ["Cyborg"]        = Vector3.new(6138.00, 294.00, 3947.00),
+    ["Saber Expert"]  = Vector3.new(-1458.00, 29.00, -50.00),
+    -- Sea 2
+    ["Diamond"]              = Vector3.new(-1576.70, 198.60, -3060.00),
+    ["Jeremy"]               = Vector3.new(2316.00, 449.00, 787.00),
+    ["Don Swan"]             = Vector3.new(2286.00, 15.00, 863.00),
+    ["Smoke Admiral"]        = Vector3.new(-5115.00, 24.00, -5338.00),
+    ["Awakened Ice Admiral"] = Vector3.new(6473.00, 297.00, -6944.00),
+    ["Tide Keeper"]          = Vector3.new(-3570.00, 123.00, -11555.00),
+    -- Sea 3
     ["Stone"]             = Vector3.new(-1195.76, 105.13, 6916.22),
     ["Hydra Leader"]      = Vector3.new(5820.68, 1071.01, -71.86),
     ["Kilo Admiral"]      = Vector3.new(3060.55, 523.81, -7260.22),
@@ -248,8 +297,13 @@ local bossSpawnLocations = {
     ["Cake Prince"]       = Vector3.new(-2136.46, 70.01, -12399.96),
     ["Dough King"]        = Vector3.new(-2136.46, 70.01, -12399.96),
     ["rip_indra"]         = Vector3.new(-5312.19, 424.01, -2625.07),
-    ["Soul Reaper"]       = Vector3.new(-9520.92, 315.93, 6709.41)
+    ["Soul Reaper"]       = Vector3.new(-9520.92, 315.93, 6709.41),
 }
+
+-- Boss mặc định = boss đầu tiên của Sea hiện tại (tránh chuỗi rỗng khiến script đánh nhầm mọi quái)
+if selectedBossTarget == "" or selectedBossTarget == nil then
+    selectedBossTarget = (seaBosses[currentSeaIndex] or {})[1] or "None"
+end
 
 local raidChipsList = {
     "Flame", "Ice", "Quake", "Light", "Dark", 
@@ -354,9 +408,16 @@ do
             {2450, "TikiQuest1",           1, "Isle Outlaw",           V(-16547.75, 61.14, -173.41),    V(-16442.81, 116.14, -264.46)},
             {2475, "TikiQuest1",           2, "Island Boy",            V(-16547.75, 61.14, -173.41),    V(-16901.27, 84.07, -192.89)},
             {2500, "TikiQuest2",           1, "Sun-kissed Warrior",    V(-16539.08, 55.69, 1051.57),    V(-16349.84, 92.07, 1106.46)},
-             {2525, "TikiQuest2",           2, "Isle Champion",         V(-16539.08, 55.69, 1051.57),    V(-16347.23, 80.17, 1121.39)},
-             {2550, "TikiQuest3",           2, "Serpent Hunter",         V(-16665.20, 111.95, 1577.82),    V(-16573.97, 107.05, 1401.19)},
-             {2575, "TikiQuest3",           2, "Skull Slayer",         V(-16665.20, 111.95, 1577.82),    V(-16720.50, 71.27, 1653.92)},
+            {2525, "TikiQuest2",           2, "Isle Champion",         V(-16539.08, 55.69, 1051.57),    V(-16347.23, 80.17, 1121.39)},
+
+            -- ================= SUBMERGED ISLAND =================
+            -- 2600-2800: tự động đi qua Submarine Worker rồi farm dưới nước
+            {2600, "SubmergedQuest1",     1, "Reef Bandit",             V(10778.875, -2087.724, 9265.184), V(11019.132, -2146.068, 9342.392)},
+            {2625, "SubmergedQuest1",     2, "Coral Pirate",            V(10778.875, -2087.724, 9265.184), V(10808.601, -2030.361, 9364.233)},
+            {2650, "SubmergedQuest2",     1, "Sea Chanter",              V(10880.686, -2086.200, 10032.624), V(10671.272, -2057.592, 10047.259)},
+            {2675, "SubmergedQuest2",     2, "Ocean Prophet",            V(10880.686, -2086.200, 10032.624), V(11008.520, -2007.728, 10223.079)},
+            {2700, "SubmergedQuest3",     1, "High Disciple",             V(9640.088, -1992.445, 9613.652), V(9750.416, -1966.939, 9753.360)},
+            {2725, "SubmergedQuest3",     2, "Grand Devotee",             V(9640.088, -1992.445, 9613.652), V(9611.705, -1993.471, 9882.688)},
         },
     }
 
@@ -492,11 +553,183 @@ function Q.mobMatches(enemyName, questMob)
     return 0
 end
 
--- Fishman Island (Sea 1) và Cursed Ship (Sea 2) cần "requestEntrance" mới vào được.
--- Trả về true nếu vừa dịch chuyển (vòng lặp nên chờ lượt sau).
+-- Fishman Island (Sea 1), Cursed Ship (Sea 2) và Submerged Island (Sea 3)
+-- cần bước vào bằng remote đặc biệt. Với Submerged Island, script tự
+-- tới khu Submarine Worker ở Tiki Outpost rồi gọi "TravelToSubmergedIsland"
+-- (tương đương bấm Yes trong hộp thoại).
 function Q.enterIfNeeded(hrp, pos)
+    if not hrp or not pos then return false end
+
+    -- =========================================================
+    -- SEA 3: SUBMERGED ISLAND
+    -- Level 2600+ phải nói chuyện với Submarine Worker ở Tiki Outpost,
+    -- sau đó gọi đúng RemoteFunction RF/SubmarineWorkerSpeak.
+    -- Chỉ trả về false khi đã xác nhận nhân vật thật sự ở dưới nước.
+    -- =========================================================
+    if World3 and pos.Y < -1000 then
+        local function getRoot()
+            local char = LocalPlayer.Character
+            return char and char:FindFirstChild("HumanoidRootPart")
+        end
+
+        local function isInsideSubmerged()
+            local root = getRoot()
+            if not root then return false end
+
+            -- Dùng chính vùng quest dưới nước làm vùng xác nhận,
+            -- tránh coi Tiki Outpost là đã vào Submerged.
+            local p = root.Position
+            local questCenter = Vector3.new(10480, -2050, 9800)
+            local dx = p.X - questCenter.X
+            local dz = p.Z - questCenter.Z
+            return p.Y < -1000 and (dx * dx + dz * dz) <= (4300 * 4300)
+        end
+
+        if isInsideSubmerged() then
+            submergedTravelBusy = false
+            submergedTravelAttempts = 0
+            return false
+        end
+
+        -- Trong lúc NPC/remote đang xử lý thì tuyệt đối không cho Auto Level
+        -- bay tiếp tới mob dưới nước.
+        if submergedTravelBusy then
+            if tick() - submergedTravelLast < 10 then
+                return true
+            end
+            submergedTravelBusy = false
+        end
+
+        -- Chống gọi remote liên tục.
+        if tick() - submergedTravelLast < 1.25 then
+            return true
+        end
+
+        submergedTravelLast = tick()
+        submergedTravelAttempts = submergedTravelAttempts + 1
+        submergedTravelBusy = true
+
+        -- Vị trí dự phòng của Submarine Worker ở Tiki Outpost.
+        local workerPos = SUBMERGED_WORKER_POS
+        local worker = nil
+
+        pcall(function()
+            worker = workspace:FindFirstChild("Submarine Worker", true)
+            if worker then
+                if worker:IsA("BasePart") then
+                    workerPos = worker.Position
+                else
+                    local ok, cf = pcall(function() return worker:GetPivot() end)
+                    if ok and cf then
+                        workerPos = cf.Position
+                    end
+                end
+            end
+        end)
+
+        Q.qlog("Submerged: tới Submarine Worker, lần " .. tostring(submergedTravelAttempts))
+
+        local root = getRoot()
+        if not root then
+            submergedTravelBusy = false
+            return true
+        end
+
+        -- Đưa người chơi tới gần NPC trước khi mở hội thoại.
+        if (root.Position - workerPos).Magnitude > 18 then
+            pcall(function()
+                flyTo(CFrame.new(workerPos + Vector3.new(0, 3, 0)), math.max(flySpeed, 220), function()
+                    return autoFarmEnabled and LocalPlayer.Character ~= nil
+                end)
+            end)
+            task.wait(0.2)
+        end
+
+        -- Cập nhật root sau khi di chuyển vì Character/HRP có thể vừa thay đổi.
+        root = getRoot()
+        if not root then
+            submergedTravelBusy = false
+            return true
+        end
+
+        -- =========================================================
+        -- ĐÚNG REMOTE CỦA SUBMARINE WORKER
+        -- ReplicatedStorage.RF.SubmarineWorkerSpeak
+        -- =========================================================
+        local invoked = false
+        local result = nil
+
+        local okFind = pcall(function()
+            local rfFolder = ReplicatedStorage:FindFirstChild("RF")
+            local rf = rfFolder and rfFolder:FindFirstChild("SubmarineWorkerSpeak")
+
+            if rf and rf:IsA("RemoteFunction") then
+                local okInvoke, ret = pcall(function()
+                    return rf:InvokeServer("TravelToSubmergedIsland")
+                end)
+                if okInvoke then
+                    invoked = true
+                    result = ret
+                end
+            end
+        end)
+
+        -- Một số bản map có thể đặt remote trực tiếp ở ReplicatedStorage.
+        if not invoked then
+            pcall(function()
+                local rf = ReplicatedStorage:FindFirstChild("SubmarineWorkerSpeak")
+                if rf and rf:IsA("RemoteFunction") then
+                    local okInvoke, ret = pcall(function()
+                        return rf:InvokeServer("TravelToSubmergedIsland")
+                    end)
+                    if okInvoke then
+                        invoked = true
+                        result = ret
+                    end
+                end
+            end)
+        end
+
+        -- Fallback cuối: nếu remote chưa xuất hiện nhưng NPC có ProximityPrompt,
+        -- kích hoạt prompt để mở đúng hội thoại NPC. Không tự teleport mù.
+        if not invoked and worker then
+            pcall(function()
+                local prompt = worker:FindFirstChildWhichIsA("ProximityPrompt", true)
+                if prompt and typeof(fireproximityprompt) == "function" then
+                    fireproximityprompt(prompt)
+                end
+            end)
+        end
+
+        if not invoked then
+            Q.qlog("Submerged: chưa gọi được RF/SubmarineWorkerSpeak; sẽ thử lại")
+            submergedTravelBusy = false
+            return true
+        end
+
+        Q.qlog("Submerged: gọi TravelToSubmergedIsland thành công", result)
+
+        -- Remote có thể trả về trước khi Character được chuyển map/vị trí.
+        -- Chờ tối đa 10 giây và chỉ cho farm tiếp khi xác nhận Y < -1000.
+        local deadline = tick() + 10
+        while tick() < deadline do
+            task.wait(0.2)
+            if isInsideSubmerged() then
+                submergedTravelBusy = false
+                submergedTravelAttempts = 0
+                Q.qlog("Submerged: xác nhận đã xuống đảo dưới nước")
+                return false
+            end
+        end
+
+        submergedTravelBusy = false
+        Q.qlog("Submerged: remote đã chạy nhưng chưa xác nhận vị trí, sẽ thử lại")
+        return true
+    end
+
+    -- Sea 1 / Sea 2
     local commF = getCommF()
-    if not commF or not hrp or not pos then return false end
+    if not commF then return false end
     local entrance
     if World1 and pos.X > 50000 and hrp.Position.X < 50000 then
         entrance = Vector3.new(61163.8515625, 5.342342376708252, 1819.7841796875)
@@ -690,10 +923,12 @@ local function claimQuestCore(questName, questLevel, mobName, questNpcPos)
     local hrp = character and character:FindFirstChild("HumanoidRootPart")
     if not hrp then return false end
 
+    -- Sea 3 Submerged phải xử lý bước NPC trước; không phụ thuộc CommF_
+    -- vì Auto Level cần vào đảo trước khi nhận quest ở dưới nước.
+    if Q.enterIfNeeded(hrp, questNpcPos) then return false end
+
     local commF = getCommF()
     if not commF then return true end
-
-    if Q.enterIfNeeded(hrp, questNpcPos) then return false end
 
     if (hrp.Position - questNpcPos).Magnitude > 30 then
         Q.qlog("Cần nhận quest mới -> bay tới NPC:", questName, questLevel)
@@ -1368,6 +1603,10 @@ createToggleFeature(farmPage, "AutoFarmTargetToggle", "Auto Farm Target", "Tự 
         if toggleUpdateFuncs["AutoFarmMaterialToggle"] then toggleUpdateFuncs["AutoFarmMaterialToggle"](false) end
         if toggleUpdateFuncs["AutoFarmBossToggle"] then toggleUpdateFuncs["AutoFarmBossToggle"](false) end
         if toggleUpdateFuncs["AutoRaidToggle"] then toggleUpdateFuncs["AutoRaidToggle"](false) end
+        -- FIX: toggleUpdateFuncs chỉ đổi hình ô tick, phải tự tắt biến thật để không chạy chồng chéo.
+        autoFarmMaterialEnabled = false
+        autoRaidEnabled = false
+        _G.Dungeon = false
     end
 end)
 
@@ -1379,7 +1618,7 @@ end)
 local materialDropdownCard = Instance.new("Frame")
 materialDropdownCard.Size = UDim2.new(1, 0, 0, 44)
 materialDropdownCard.BackgroundColor3 = BANANA_CARD
-materialDropdownCard.LayoutOrder = 4
+materialDropdownCard.LayoutOrder = 5
 materialDropdownCard.ClipsDescendants = true
 materialDropdownCard.Parent = farmPage
 addCorner(materialDropdownCard, 8)
@@ -1489,7 +1728,7 @@ for index, matName in ipairs(materialListNames) do
 end
 materialOptionsList.CanvasSize = UDim2.new(0, 0, 0, #materialListNames * 36)
 
-createToggleFeature(farmPage, "AutoFarmMaterialToggle", "Auto Farm Material", "Bay đến và diệt quái rớt nguyên liệu chọn", 5, autoFarmMaterialEnabled, function(state)
+createToggleFeature(farmPage, "AutoFarmMaterialToggle", "Auto Farm Material", "Bay đến và diệt quái rớt nguyên liệu chọn", 6, autoFarmMaterialEnabled, function(state)
     autoFarmMaterialEnabled = state
     if state then
         currentMatPointIndex = 1
@@ -1497,6 +1736,8 @@ createToggleFeature(farmPage, "AutoFarmMaterialToggle", "Auto Farm Material", "B
         if toggleUpdateFuncs["AutoFarmBossToggle"] then toggleUpdateFuncs["AutoFarmBossToggle"](false) end
         if toggleUpdateFuncs["AutoRaidToggle"] then toggleUpdateFuncs["AutoRaidToggle"](false) end
         autoFarmEnabled = false
+        autoRaidEnabled = false
+        _G.Dungeon = false
     end
 end)
 
@@ -1565,7 +1806,8 @@ local function renderBossList()
     end
     bossBtns = {}
     local currentLayoutOrder = 1
-    for seaName, bosses in pairs(seaBosses) do
+    do
+        local seaName, bosses = "Sea " .. currentSeaIndex, (seaBosses[currentSeaIndex] or {})
         local seaLabel = Instance.new("TextLabel")
         seaLabel.Size = UDim2.new(1, 0, 0, 22)
         seaLabel.BackgroundTransparency = 1
@@ -1628,6 +1870,9 @@ createToggleFeature(bossPage, "AutoFarmBossToggle", "Auto Fly & Farm Boss", "T�
         if toggleUpdateFuncs["AutoFarmTargetToggle"] then toggleUpdateFuncs["AutoFarmTargetToggle"](false) end
         if toggleUpdateFuncs["AutoFarmMaterialToggle"] then toggleUpdateFuncs["AutoFarmMaterialToggle"](false) end
         if toggleUpdateFuncs["AutoRaidToggle"] then toggleUpdateFuncs["AutoRaidToggle"](false) end
+        autoFarmMaterialEnabled = false
+        autoRaidEnabled = false
+        _G.Dungeon = false
         autoFarmEnabled = true
     else
         autoFarmEnabled = false
@@ -1728,6 +1973,10 @@ createToggleFeature(raidPage, "AutoRaidToggle", "Auto Farm Raid (Fly)", "Tự đ
     end
 end)
 
+createToggleFeature(raidPage, "RaidKillAuraToggle", "Raid Kill Aura (Đảo 4-5)", "Đảo 4 & 5: gom toàn bộ quái Raid rồi RESET (giết) hết cùng lúc", 6, _G.RaidKillAura, function(state)
+    _G.RaidKillAura = state
+end)
+
 if World2 then
     createToggleFeature(raidPage, "AutoLawRaidToggle", "Auto Farm Law Raid (Sea 2)", "Tự động đánh Boss Order (Law)", 5, _G.AutoLawRaid, function(state)
         _G.AutoLawRaid = state
@@ -1751,11 +2000,12 @@ local RAID_FIXED = {
     debug = true,
     buyCooldown = 4,
     startCooldown = 4,
+    -- Tự retry tìm nút / chip để tránh kẹt khi map load chậm.
     arrivalDistance = 7,
     detectorWaitTimeout = 10,
     clickRetries = 4,
     islandHeight = 60,
-    lockHeight = 45,
+    lockHeight = 35,   -- bằng độ cao farm thường để Fast Attack luôn trong tầm đánh
     session = 0,
     running = false,
     starting = false,
@@ -1766,6 +2016,16 @@ local RAID_FIXED = {
     nextStartAt = 0,
     currentIsland = 0,
     lastStatus = "Idle",
+    activeReason = nil,
+    killAuraActive = false,
+    killAuraRadius = 200,     -- tầm Fast Attack khi Kill Aura
+    killAuraMaxTargets = 15,  -- số quái đánh cùng lúc khi Kill Aura
+    auraConnection = nil,
+    auraHoldCF = nil,
+    auraIsland = 0,
+    auraGroundY = 0,
+    baseReady = false,
+    baseIslands = {},
     flightTween = nil,
     lockConnection = nil,
     lockEnemy = nil,
@@ -1914,6 +2174,26 @@ local function hasSpecialMicrochip()
     return scan(LocalPlayer:FindFirstChild("Backpack")) or scan(LocalPlayer.Character)
 end
 
+-- Một số nút Raid không nhận thao tác nếu nhân vật đang cầm Tool.
+-- Tạm tháo toàn bộ Tool trước khi mua chip / bấm Start, sau đó Auto Farm sẽ tự equip lại.
+local function unequipRaidTools()
+    pcall(function()
+        local character = LocalPlayer.Character
+        local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+        if humanoid then
+            humanoid:UnequipTools()
+        end
+
+        if character then
+            for _, obj in ipairs(character:GetChildren()) do
+                if obj:IsA("Tool") then
+                    obj.Parent = LocalPlayer:FindFirstChild("Backpack") or character
+                end
+            end
+        end
+    end)
+end
+
 local function getRaidTimer()
     local pg = LocalPlayer:FindFirstChild("PlayerGui")
     local main = pg and pg:FindFirstChild("Main")
@@ -1922,24 +2202,54 @@ end
 
 local function getRaidLocations()
     local worldOrigin = workspace:FindFirstChild("_WorldOrigin")
-    return worldOrigin and worldOrigin:FindFirstChild("Locations")
+    if not worldOrigin then return nil end
+
+    return worldOrigin:FindFirstChild("Locations")
+        or worldOrigin:FindFirstChild("Locations", true)
 end
 
 local function getRaidIsland(index)
     local locations = getRaidLocations()
     if not locations then return nil end
-    return locations:FindFirstChild("Island " .. tostring(index))
+
+    local name = "Island " .. tostring(index)
+    return locations:FindFirstChild(name) or locations:FindFirstChild(name, true)
 end
 
--- Raid đang chạy khi Timer hiện hoặc đã có Island 1.
+-- FIX Sea 2: Raid chỉ được coi là "đang chạy" khi Timer thật sự hiện, hoặc xuất hiện "Island N" MỚI
+-- (không có sẵn lúc chưa Raid). Chụp baseline các Island có sẵn để không bị báo "Raid đang chạy" giả,
+-- vì khi giả thì Auto Buy Chip và Auto Start Raid bị chặn vĩnh viễn.
 local function isRaidActive()
     local ok, active = pcall(function()
         local timer = getRaidTimer()
-        if timer and timer.Visible then
+        local timerOn = timer ~= nil and timer.Visible == true
+        local locations = getRaidLocations()
+
+        if locations and not timerOn and not RAID_FIXED.baseReady then
+            for i = 1, 8 do
+                if locations:FindFirstChild("Island " .. i) then
+                    RAID_FIXED.baseIslands[i] = true
+                end
+            end
+            RAID_FIXED.baseReady = true
+        end
+
+        if timerOn then
+            RAID_FIXED.activeReason = "Timer"
             return true
         end
-        local locations = getRaidLocations()
-        return locations ~= nil and locations:FindFirstChild("Island 1") ~= nil
+
+        if locations then
+            for i = 1, 8 do
+                if not RAID_FIXED.baseIslands[i] and locations:FindFirstChild("Island " .. i) then
+                    RAID_FIXED.activeReason = "Island " .. i
+                    return true
+                end
+            end
+        end
+
+        RAID_FIXED.activeReason = nil
+        return false
     end)
     return ok and active == true
 end
@@ -2082,31 +2392,43 @@ local function findRaidSummonDetector()
     local map = workspace:FindFirstChild("Map")
     if not map then return nil end
 
-    local summon
+    -- Ưu tiên chính xác theo từng Sea.
+    local directSummon
     if World2 then
-        local circleIsland = map:FindFirstChild("CircleIsland")
-        summon = circleIsland and circleIsland:FindFirstChild("RaidSummon2")
+        local circle = map:FindFirstChild("CircleIsland")
+        directSummon = circle and circle:FindFirstChild("RaidSummon2")
     elseif World3 then
-        local boatCastle = map:FindFirstChild("Boat Castle")
-        summon = boatCastle and boatCastle:FindFirstChild("RaidSummon2")
+        local boat = map:FindFirstChild("Boat Castle")
+        directSummon = boat and boat:FindFirstChild("RaidSummon2")
     end
 
-    local button = summon and summon:FindFirstChild("Button")
-    local main = button and button:FindFirstChild("Main")
-    local detector = main and main:FindFirstChildOfClass("ClickDetector")
-    if detector then return detector end
+    if directSummon then
+        local button = directSummon:FindFirstChild("Button")
+        local main = button and button:FindFirstChild("Main")
+        local detector = main and main:FindFirstChildOfClass("ClickDetector")
+        if detector then
+            return detector
+        end
 
-    -- Fallback nếu cấu trúc map đổi nhẹ: tìm trong đúng khu vực Raid trước.
-    local scope = (World3 and map:FindFirstChild("Boat Castle")) or (World2 and map:FindFirstChild("CircleIsland")) or map
+        detector = directSummon:FindFirstChildWhichIsA("ClickDetector", true)
+        if detector then return detector end
+    end
+
+    -- Fallback: cấu trúc map có thể thay đổi nhẹ. Chỉ chấp nhận ClickDetector
+    -- có tổ tiên mang tên RaidSummon2 để tránh bấm nhầm nút khác.
+    local scope = (World3 and map:FindFirstChild("Boat Castle"))
+        or (World2 and map:FindFirstChild("CircleIsland"))
+        or map
+
     for _, obj in ipairs(scope:GetDescendants()) do
         if obj:IsA("ClickDetector") then
-            local mainPart = obj.Parent
-            if mainPart and mainPart.Name == "Main" then
-                local buttonPart = mainPart.Parent
-                local summonPart = buttonPart and buttonPart.Parent
-                if summonPart and summonPart.Name == "RaidSummon2" then
+            local parent = obj.Parent
+            for _ = 1, 8 do
+                if not parent then break end
+                if parent.Name == "RaidSummon2" then
                     return obj
                 end
+                parent = parent.Parent
             end
         end
     end
@@ -2126,6 +2448,16 @@ local function prepareRaidRoom()
         return false, "Chưa có nhân vật"
     end
 
+    -- Quan trọng: bỏ Tool trước khi bấm nút Start Raid.
+    unequipRaidTools()
+    task.wait(0.1)
+
+    -- FIX Sea 2: đảo Raid ở rất xa, nút RaidSummon2 chưa được tải (StreamingEnabled) nên không tìm thấy.
+    -- Yêu cầu server stream map quanh phòng Raid trước khi bay tới.
+    task.spawn(function()
+        pcall(function() LocalPlayer:RequestStreamAroundAsync(target.Position) end)
+    end)
+
     setRaidNoclip(true)
 
     -- Tắt tween/farm chung đang chạy để không tranh quyền điều khiển HRP.
@@ -2135,16 +2467,25 @@ local function prepareRaidRoom()
         currentRaidTween = nil
     end
 
-    -- Sea 3: dịch chuyển nhanh vào khu Boat Castle nếu đang ở xa.
-    if World3 and (hrp.Position - target.Position).Magnitude > 600 then
+    -- Nếu nút Raid đã load sẵn, lấy chính vị trí của nút làm mục tiêu;
+    -- nếu chưa load thì dùng tọa độ dự phòng theo Sea.
+    local detector = findRaidSummonDetector()
+    if detector and detector.Parent and detector.Parent:IsA("BasePart") then
+        target = CFrame.new(detector.Parent.Position + Vector3.new(0, 4, 0))
+    elseif World3 and (hrp.Position - target.Position).Magnitude > 600 then
         RAID_FIXED.lastStatus = "Sea 3: requestEntrance..."
         pcall(function()
             commF:InvokeServer("requestEntrance", Vector3.new(-5075.50927734375, 314.5155029296875, -3150.0224609375))
         end)
         task.wait(0.6)
+
+        detector = findRaidSummonDetector()
+        if detector and detector.Parent and detector.Parent:IsA("BasePart") then
+            target = CFrame.new(detector.Parent.Position + Vector3.new(0, 4, 0))
+        end
     end
 
-    RAID_FIXED.lastStatus = "Đang bay tới phòng Raid"
+    RAID_FIXED.lastStatus = World3 and "Sea 3: tới phòng Raid" or "Sea 2: tới phòng Raid"
     local ok = raidFlyTo(target, flySpeed, raidStartEnabled)
     if not ok then
         return false, "Bay tới phòng Raid bị gián đoạn"
@@ -2162,7 +2503,26 @@ local function prepareRaidRoom()
     return true, "Đã tới phòng Raid"
 end
 
+-- InvokeServer có timeout: nếu server không trả lời thì không bị treo vĩnh viễn
+local function invokeRemote(remote, timeout, ...)
+    local args = table.pack(...)
+    local done, ok, res = false, false, nil
+    task.spawn(function()
+        ok, res = pcall(function()
+            return remote:InvokeServer(table.unpack(args, 1, args.n))
+        end)
+        done = true
+    end)
+    local deadline = tick() + (timeout or 5)
+    while not done and tick() < deadline do
+        task.wait(0.05)
+    end
+    return done and ok, res
+end
+
 -- Mua chip: gửi đúng tên chip server nhận, chờ chip vào Backpack.
+-- Lần 1 mua từ xa. Nếu không nhận được chip (một số bản Sea 2 bắt phải đứng gần NPC Raid)
+-- thì bay tới phòng Raid rồi mua lại.
 local function buySelectedRaidChip()
     if not (World2 or World3) then
         return false, "Raid chỉ hỗ trợ Sea 2/Sea 3"
@@ -2171,7 +2531,7 @@ local function buySelectedRaidChip()
         return true, "Đã có Special Microchip"
     end
     if isRaidActive() then
-        return false, "Raid đang chạy"
+        return false, "Raid đang chạy (" .. tostring(RAID_FIXED.activeReason) .. ")"
     end
     if RAID_FIXED.buying then
         return false, "Đang mua chip..."
@@ -2190,35 +2550,74 @@ local function buySelectedRaidChip()
 
     local selected = selectedRaidChip or _G.SelectChip or "Flame"
     local serverNames = RAID_CHIP_SERVER_NAMES[selected] or {selected}
+    local lastReply = nil
 
-    local gotChip = false
-    for _, serverName in ipairs(serverNames) do
-        RAID_FIXED.lastStatus = "Đang mua " .. tostring(selected) .. " Chip"
+    local function tryBuy()
+        for _, serverName in ipairs(serverNames) do
+            if hasSpecialMicrochip() then return true end
 
-        local okSelect, resultSelect = pcall(function()
-            return commF:InvokeServer("RaidsNpc", "Select", serverName)
-        end)
-        raidLog("RaidsNpc Select", serverName, okSelect, resultSelect)
+            RAID_FIXED.lastStatus = "Đang mua " .. tostring(selected) .. " Chip (" .. tostring(serverName) .. ")"
+            local okSelect, reply = invokeRemote(commF, 6, "RaidsNpc", "Select", serverName)
+            raidLog("RaidsNpc Select", serverName, okSelect, reply)
+            if reply ~= nil then lastReply = reply end
 
-        local deadline = tick() + 2.5
-        repeat
-            task.wait(0.1)
-        until hasSpecialMicrochip() or tick() >= deadline
+            local deadline = tick() + 3
+            repeat
+                task.wait(0.1)
+            until hasSpecialMicrochip() or tick() >= deadline
 
-        if hasSpecialMicrochip() then
-            gotChip = true
-            break
+            if hasSpecialMicrochip() then return true end
         end
+        return false
     end
 
-    RAID_FIXED.buying = false
+    local okRun, gotChip = pcall(function()
+        if tryBuy() then return true end
 
-    if gotChip then
+        -- Lần 2: bay tới NPC/phòng Raid rồi mua lại.
+        local target = getRaidRoomTarget()
+        local root = getPlayerRoot()
+        if target and root and (root.Position - target.Position).Magnitude > 150
+            and (autoBuyChipEnabled or _G.AutoBuyChip) then
+            RAID_FIXED.lastStatus = "Bay tới NPC Raid để mua chip..."
+            task.spawn(function()
+                pcall(function() LocalPlayer:RequestStreamAroundAsync(target.Position) end)
+            end)
+            local arrived = raidFlyTo(target, flySpeed, function()
+                return (autoBuyChipEnabled or _G.AutoBuyChip) and not isRaidActive()
+            end)
+            if arrived then
+                setRaidHold(target)
+                task.wait(0.5)
+                local got = tryBuy()
+                if not raidFarmEnabled() then
+                    setRaidHold(nil)
+                    setRaidNoclip(false)
+                    restoreCharacterCollision()
+                end
+                return got
+            end
+            if not raidFarmEnabled() then
+                setRaidHold(nil)
+                setRaidNoclip(false)
+                restoreCharacterCollision()
+            end
+        end
+        return false
+    end)
+
+    RAID_FIXED.buying = false -- luôn nhả cờ, kể cả khi lỗi
+
+    if okRun and gotChip then
         RAID_FIXED.lastStatus = "Đã nhận Special Microchip"
         return true, "Đã nhận Special Microchip"
     end
 
-    return false, "Chưa nhận được Special Microchip (kiểm tra Beli/Fragments)"
+    local msg = "Chưa nhận được chip (kiểm tra Beli/Fragments)"
+    if lastReply ~= nil then
+        msg = msg .. " | Server: " .. tostring(lastReply)
+    end
+    return false, msg
 end
 
 -- Nhả quyền điều khiển nếu không còn chế độ Farm Raid.
@@ -2255,10 +2654,6 @@ local function clickRaidSummon()
         return false, "Đang chờ cooldown Start Raid"
     end
 
-    if typeof(fireclickdetector) ~= "function" then
-        return false, "Executor không hỗ trợ fireclickdetector"
-    end
-
     RAID_FIXED.starting = true
     RAID_FIXED.nextStartAt = tick() + RAID_FIXED.startCooldown
     local mySession = RAID_FIXED.session
@@ -2292,6 +2687,25 @@ local function clickRaidSummon()
         end
 
         if not detector then
+            -- Thử đọc chính xác đường dẫn lần cuối sau khi map đã load.
+            if World2 then
+                local d = workspace:FindFirstChild("Map")
+                    and workspace.Map:FindFirstChild("CircleIsland")
+                    and workspace.Map.CircleIsland:FindFirstChild("RaidSummon2")
+                detector = d and d:FindFirstChild("Button")
+                    and d.Button:FindFirstChild("Main")
+                    and d.Button.Main:FindFirstChildOfClass("ClickDetector")
+            elseif World3 then
+                local d = workspace:FindFirstChild("Map")
+                    and workspace.Map:FindFirstChild("Boat Castle")
+                    and workspace.Map["Boat Castle"]:FindFirstChild("RaidSummon2")
+                detector = d and d:FindFirstChild("Button")
+                    and d.Button:FindFirstChild("Main")
+                    and d.Button.Main:FindFirstChildOfClass("ClickDetector")
+            end
+        end
+
+        if not detector then
             return false, "Không tìm thấy RaidSummon2"
         end
 
@@ -2299,7 +2713,7 @@ local function clickRaidSummon()
         local buttonPart = detector.Parent
         if buttonPart and buttonPart:IsA("BasePart") then
             local root = getPlayerRoot()
-            if root and (root.Position - buttonPart.Position).Magnitude > 12 then
+            if root and (root.Position - buttonPart.Position).Magnitude > 10 then
                 local nearCF = CFrame.new(buttonPart.Position + Vector3.new(0, 4, 0))
                 if raidFlyTo(nearCF, flySpeed, raidStartEnabled) then
                     setRaidHold(nearCF)
@@ -2307,17 +2721,59 @@ local function clickRaidSummon()
             end
         end
 
+        -- Nút Start có thể bị từ chối nếu đang cầm vũ khí / Tool.
+        unequipRaidTools()
+        task.wait(0.15)
+
         for attempt = 1, RAID_FIXED.clickRetries do
             if not sessionOk() then return false, "Nhân vật đã hồi sinh" end
             if not raidStartEnabled() then return false, "Đã tắt Start Raid" end
 
-            RAID_FIXED.lastStatus = "Start Raid lần " .. tostring(attempt)
+            -- Detector có thể bị recreate; luôn lấy lại trước từng lần thử.
+            detector = findRaidSummonDetector() or detector
+            RAID_FIXED.lastStatus = "Start Raid " .. (World3 and "Sea 3" or "Sea 2") .. " lần " .. tostring(attempt)
 
             local ok, err = pcall(function()
-                if attempt % 2 == 0 then
-                    fireclickdetector(detector, 0)
-                else
+                unequipRaidTools()
+                task.wait(0.08)
+
+                -- Làm mới detector ngay trước khi click.
+                local fresh = findRaidSummonDetector()
+                if fresh then
+                    detector = fresh
+                end
+
+                -- ClickDetector mặc định (nếu executor hỗ trợ).
+                if typeof(fireclickdetector) == "function" then
                     fireclickdetector(detector)
+                    task.wait(0.08)
+                end
+
+                -- Dự phòng: click thật lên nút bằng chuột ảo (executor không có fireclickdetector,
+                -- hoặc lần click đầu không có tác dụng).
+                if (typeof(fireclickdetector) ~= "function" or attempt >= 2)
+                    and okVIM and VirtualInputManager
+                    and detector.Parent and detector.Parent:IsA("BasePart") then
+                    local cam = workspace.CurrentCamera
+                    local part = detector.Parent
+                    if cam then
+                        cam.CFrame = CFrame.lookAt(cam.CFrame.Position, part.Position)
+                        local v, onScreen = cam:WorldToViewportPoint(part.Position)
+                        if onScreen then
+                            VirtualInputManager:SendMouseButtonEvent(v.X, v.Y, 0, true, game, 0)
+                            task.wait(0.05)
+                            VirtualInputManager:SendMouseButtonEvent(v.X, v.Y, 0, false, game, 0)
+                        end
+                    end
+                end
+
+                -- Một số executor/game build nhận tốt hơn khi truyền distance = 0.
+                if attempt % 2 == 0 then
+                    pcall(function()
+                        if typeof(fireclickdetector) == "function" then
+                            fireclickdetector(detector, 0)
+                        end
+                    end)
                 end
             end)
 
@@ -2341,6 +2797,9 @@ local function clickRaidSummon()
             end
         end
 
+        setRaidHold(nil)
+        setRaidNoclip(false)
+        restoreCharacterCollision()
         return false, "Đã click nhưng server chưa tạo Raid"
     end
 
@@ -2487,8 +2946,67 @@ local function startRaidPositionLock(enemy)
     end)
 end
 
+-- ===== RAID KILL AURA =====
+-- Khi farm tới đảo 4/5: đứng giữa cụm quái, GOM toàn bộ quái Raid của đảo về dưới chân,
+-- RESET (giết ngay: Health = 0 + BreakJoints) tất cả quái, đồng thời Fast Attack đánh phụ trợ
+-- (phòng khi server không nhận máu đổi từ client).
+function RAID_FIXED.stopAura()
+    RAID_FIXED.killAuraActive = false
+    RAID_FIXED.auraHoldCF = nil
+    if RAID_FIXED.auraConnection then
+        pcall(function() RAID_FIXED.auraConnection:Disconnect() end)
+        RAID_FIXED.auraConnection = nil
+    end
+end
+
+function RAID_FIXED.startAura()
+    RAID_FIXED.killAuraActive = true
+    if RAID_FIXED.auraConnection then return end
+
+    RAID_FIXED.auraConnection = RunService.Heartbeat:Connect(function()
+        if not RAID_FIXED.killAuraActive then return end
+        local hold = RAID_FIXED.auraHoldCF
+        local folder = workspace:FindFirstChild("Enemies")
+        local isl = getPivotPosition(getRaidIsland(RAID_FIXED.auraIsland))
+        if not hold or not folder or not isl then return end
+
+        pcall(function()
+            if sethiddenproperty then
+                sethiddenproperty(LocalPlayer, "SimulationRadius", math.huge)
+            end
+        end)
+
+        local gather = Vector3.new(hold.Position.X, RAID_FIXED.auraGroundY, hold.Position.Z)
+        for _, mob in ipairs(folder:GetChildren()) do
+            local mh = mob:FindFirstChild("HumanoidRootPart")
+            local hum = mob:FindFirstChildOfClass("Humanoid")
+            if mh and hum and hum.Health > 0
+                and (mh.Position - isl.Position).Magnitude <= 650 then
+                pcall(function()
+                    mh.CanCollide = false
+                    mh.AssemblyLinearVelocity = Vector3.zero
+                    mh.AssemblyAngularVelocity = Vector3.zero
+                    hum.PlatformStand = true
+                    hum.WalkSpeed = 0
+                    mh.CFrame = CFrame.new(gather)
+
+                    -- RESET quái: đặt máu về 0 và phá khớp (cần SimulationRadius lớn / quái ở gần mình)
+                    if _G.RaidKillAuraReset ~= false then
+                        hum.Health = 0
+                        mob:BreakJoints()
+                    end
+                end)
+            end
+        end
+    end)
+end
+
 local function farmRaidIslands()
+    if not (World2 or World3) then return false end
     if not raidFarmEnabled() or not isRaidActive() then return false end
+
+    -- Khi Raid đã bắt đầu, bỏ Tool Start còn sót rồi Farm mới tự equip lại.
+    unequipRaidTools()
 
     local mySession = RAID_FIXED.session
     local function alive()
@@ -2556,7 +3074,7 @@ local function farmRaidIslands()
 
         local enemy = curIsland > 0 and getRaidEnemy(curIsland) or nil
         -- Đảo hiện tại trống > 25s và không có đảo kế -> dọn quái sót ở đảo khác
-        if not enemy and clearedSince and tick() - clearedSince > 25 and not nextIsland(curIsland) then
+        if not enemy and clearedSince and tick() - clearedSince > 10 and not nextIsland(curIsland) then
             enemy = getRaidEnemy(nil)
         end
 
@@ -2569,7 +3087,41 @@ local function farmRaidIslands()
             local enemyHrp = enemy.HumanoidRootPart
             local currentHrp = getPlayerRoot()
 
-            if currentHrp then
+            local auraOn = (_G.RaidKillAura ~= false)
+                and curIsland >= (tonumber(_G.RaidKillAuraIsland) or 4)
+            if not auraOn and RAID_FIXED.killAuraActive then
+                RAID_FIXED.stopAura()
+            end
+
+            if auraOn and currentHrp then
+                -- KILL AURA (đảo 4-5)
+                stopRaidPositionLock()
+                if RAID_FIXED.auraIsland ~= curIsland or not RAID_FIXED.auraHoldCF then
+                    RAID_FIXED.stopAura()
+                    RAID_FIXED.auraIsland = curIsland
+                    RAID_FIXED.auraGroundY = enemyHrp.Position.Y
+                    RAID_FIXED.auraHoldCF = CFrame.new(enemyHrp.Position + Vector3.new(0, RAID_FIXED.lockHeight, 0))
+                end
+
+                local hold = RAID_FIXED.auraHoldCF
+                if (currentHrp.Position - hold.Position).Magnitude > 12 then
+                    RAID_FIXED.lastStatus = "Kill Aura: bay tới cụm quái đảo " .. tostring(curIsland)
+                    RAID_FIXED.stopAura()  -- hủy aura cũ, đặt lại điểm giữ mới sau khi bay xong
+                    RAID_FIXED.auraIsland = curIsland
+                    RAID_FIXED.auraGroundY = enemyHrp.Position.Y
+                    RAID_FIXED.auraHoldCF = CFrame.new(enemyHrp.Position + Vector3.new(0, RAID_FIXED.lockHeight, 0))
+                    hold = RAID_FIXED.auraHoldCF
+                    if raidFlyTo(hold, flySpeed, alive) then
+                        setRaidHold(hold)
+                    end
+                else
+                    if RAID_FIXED.holdCF ~= hold then
+                        setRaidHold(hold)
+                    end
+                    RAID_FIXED.startAura()
+                    RAID_FIXED.lastStatus = "Kill Aura đảo " .. tostring(curIsland) .. " - đang gom & diệt quái"
+                end
+            elseif currentHrp then
                 local targetPos = enemyHrp.Position + Vector3.new(0, RAID_FIXED.lockHeight, 0)
                 local dist = (currentHrp.Position - targetPos).Magnitude
 
@@ -2586,6 +3138,7 @@ local function farmRaidIslands()
             end
         else
             targetEnemy = nil
+            RAID_FIXED.stopAura()
             stopRaidPositionLock()
             clearedSince = clearedSince or tick()
 
@@ -2620,6 +3173,7 @@ local function farmRaidIslands()
         task.wait(0.05)
     end
 
+    RAID_FIXED.stopAura()
     stopRaidPositionLock()
     setRaidHold(nil)
     targetEnemy = nil
@@ -2665,9 +3219,10 @@ task.spawn(function()
             local farmOn  = raidFarmEnabled()
             local startOn = raidStartEnabled()
 
-            if startOn and (World2 or World3) then
+            if (startOn or farmOn) and (World2 or World3) then
                 if not isRaidActive() then
-                    if not RAID_FIXED.starting and not RAID_FIXED.running then
+                    -- Chỉ Start khi Auto Start hoặc Auto Farm Raid đang bật.
+                    if startOn and not RAID_FIXED.starting and not RAID_FIXED.running then
                         if hasSpecialMicrochip() then
                             local ok, msg = clickRaidSummon()
                             if not ok and msg then
@@ -2692,6 +3247,7 @@ task.spawn(function()
                     RAID_FIXED.session += 1 -- huỷ mọi tiến trình Raid đang chạy
                     RAID_FIXED.running = false
                     RAID_FIXED.starting = false
+                    RAID_FIXED.stopAura()
                     stopRaidPositionLock()
                     setRaidHold(nil)
                     cancelRaidFlight()
@@ -2706,6 +3262,7 @@ end)
 LocalPlayer.CharacterAdded:Connect(function()
     task.wait(0.2)
     RAID_FIXED.session += 1 -- huỷ tiến trình Raid của nhân vật cũ
+    RAID_FIXED.stopAura()
     stopRaidPositionLock()
     setRaidHold(nil)
     cancelRaidFlight()
@@ -3165,12 +3722,26 @@ createInputFeature(settingsPage, "Bring Mob Count", maxBringCount, 5, function(v
 end)
 
 createToggleFeature(settingsPage, nil, "Fast Attack V2 (Melee, Sword & Fruit)", "Đánh siêu nhanh không delay cho cả Cận chiến, Kiếm & Trái ác quỷ", 6, fastAttackEnabled, function(state) fastAttackEnabled = state end)
-createToggleFeature(settingsPage, nil, "Auto Buso Haki", "Tự động kích hoạt Haki Vũ Trang", 7, autoHakiEnabled, function(state) autoHakiEnabled = state end)
-createToggleFeature(settingsPage, nil, "Walk On Water", "Đứng & đi trên mặt nước không mất máu", 8, walkOnWaterEnabled, function(state) walkOnWaterEnabled = state end)
-createToggleFeature(settingsPage, nil, "Auto Race V3", "Tự động dùng skill Tộc V3 (Phím T)", 9, autoRaceV3Enabled, function(state) autoRaceV3Enabled = state end)
-createToggleFeature(settingsPage, nil, "Auto Race V4", "Tự động bật Thức Tỉnh Tộc V4 (Phím Y)", 10, autoRaceV4Enabled, function(state) autoRaceV4Enabled = state end)
-createToggleFeature(settingsPage, nil, "Anti-AFK Mode", "Tự động chống văng game (Disconnect) khi treo máy", 11, autoAfkEnabled, function(state) autoAfkEnabled = state end)
-createInputFeature(settingsPage, "Fast Attack Targets", maxAttackTargets, 12, function(val)
+
+-- ==================== DODGE CONFIG GLOBAL ====================
+createToggleFeature(settingsPage, nil, "Auto Buso Haki", "Tự động kích hoạt Haki Vũ Trang", 12, autoHakiEnabled, function(state)
+    autoHakiEnabled = state
+end)
+createToggleFeature(settingsPage, nil, "Auto Observation Haki", "Tự động bật Haki Quan Sát / Instinct (Phím E)", 13, autoObservationEnabled, function(state)
+    autoObservationEnabled = state
+    if state then
+        observationState.lastTry = 0
+        task.spawn(function()
+            task.wait(0.15)
+            if ensureObservation then pcall(ensureObservation) end
+        end)
+    end
+end)
+createToggleFeature(settingsPage, nil, "Walk On Water", "Đứng & đi trên mặt nước không mất máu", 14, walkOnWaterEnabled, function(state) walkOnWaterEnabled = state end)
+createToggleFeature(settingsPage, nil, "Auto Race V3", "Tự động dùng skill Tộc V3 (Phím T)", 15, autoRaceV3Enabled, function(state) autoRaceV3Enabled = state end)
+createToggleFeature(settingsPage, nil, "Auto Race V4", "Tự động bật Thức Tỉnh Tộc V4 (Phím Y)", 16, autoRaceV4Enabled, function(state) autoRaceV4Enabled = state end)
+createToggleFeature(settingsPage, nil, "Anti-AFK Mode", "Tự động chống văng game (Disconnect) khi treo máy", 17, autoAfkEnabled, function(state) autoAfkEnabled = state end)
+createInputFeature(settingsPage, "Fast Attack Targets", maxAttackTargets, 18, function(val)
     maxAttackTargets = math.clamp(math.floor(tonumber(val) or 2), 1, 6)
 end)
 
@@ -3326,18 +3897,103 @@ local function AutoHaki()
     local character = LocalPlayer.Character
     if character and not character:FindFirstChild("HasBuso") then
         local remotes = ReplicatedStorage:FindFirstChild("Remotes")
-        if remotes and remotes:FindFirstChild("CommF_") then 
-            remotes.CommF_:InvokeServer("Buso") 
+        local commF = remotes and remotes:FindFirstChild("CommF_")
+        if commF then
+            pcall(function()
+                commF:InvokeServer("Buso")
+            end)
         end
     end
 end
 
+-- =========================================================
+-- AUTO OBSERVATION HAKI / INSTINCT
+-- PC: phím E. Giữ một lần nhấn cho tới khi UI xác nhận bật,
+-- tránh spam E làm Haki bật/tắt liên tục.
+-- =========================================================
+-- FIX: bản cũ phụ thuộc vào ScreenGui.ImageLabel để biết Haki đã bật chưa. Nếu UI này không đúng
+-- với bản game hiện tại thì script tưởng "chưa bật" và cứ nhấn E mỗi 2 giây -> phím E là nút BẬT/TẮT
+-- nên Haki bật rồi tắt liên tục. Giờ: gửi lệnh "Ken = true" (chỉ BẬT, không toggle) và nhớ trạng thái
+-- theo từng nhân vật; chỉ dùng phím E tối đa 1 lần / lần hồi sinh nếu game không có remote CommE.
+local function isObservationActive()
+    local pg = LocalPlayer:FindFirstChildOfClass("PlayerGui")
+    local screenGui = pg and pg:FindFirstChild("ScreenGui")
+    local indicator = screenGui and screenGui:FindFirstChild("ImageLabel")
+    return indicator ~= nil and indicator.Visible ~= false
+end
+
+local function pressEOnce()
+    if okVIM and VirtualInputManager then
+        pcall(function()
+            VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.E, false, game)
+            task.wait(0.1)
+            VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.E, false, game)
+        end)
+    elseif okVU and VirtualUser then
+        pcall(function()
+            VirtualUser:CaptureController()
+            VirtualUser:SetKeyDown("0x65")
+            task.wait(0.1)
+            VirtualUser:SetKeyUp("0x65")
+        end)
+    end
+end
+
+ensureObservation = function()
+    local char = LocalPlayer.Character
+    if not char or not char:FindFirstChildOfClass("Humanoid") then return false end
+
+    local st = observationState
+    if st.char ~= char then -- nhân vật mới (hồi sinh) -> Haki đã mất, reset trạng thái
+        st.char, st.on, st.lastTry, st.tries = char, false, 0, 0
+    end
+
+    if isObservationActive() then
+        st.on = true
+        return true
+    end
+
+    if tick() - st.lastTry < 4 then return st.on end
+    st.lastTry = tick()
+
+    local remotes = ReplicatedStorage:FindFirstChild("Remotes")
+    local commE = remotes and remotes:FindFirstChild("CommE")
+    if commE then
+        -- "Ken", true = chỉ BẬT. Gửi lại nhiều lần cũng không làm Haki tắt.
+        pcall(function() commE:FireServer("Ken", true) end)
+        st.on = true
+        return true
+    end
+
+    -- Không có CommE: nhấn E tối đa 1 lần cho mỗi nhân vật, không bao giờ spam.
+    if not st.on and st.tries < 1 then
+        st.tries += 1
+        pressEOnce()
+        st.on = true
+    end
+    return st.on
+end
+
+LocalPlayer.CharacterAdded:Connect(function()
+    observationState.lastTry = 0
+    task.delay(1.5, function()
+        if autoObservationEnabled then
+            pcall(ensureObservation)
+        end
+    end)
+end)
+
 task.spawn(function()
+    task.wait(1)
     while true do
-        task.wait(1)
+        task.wait(0.75)
         pcall(function()
             if autoHakiEnabled then
                 AutoHaki()
+            end
+
+            if autoObservationEnabled then
+                ensureObservation()
             end
 
             if autoRaceV3Enabled then
@@ -4039,7 +4695,8 @@ local function getTargetEnemy()
                         end
                     end
                 elseif selectedFarmTarget == "Farm Boss" then
-                    if selectedBossTarget ~= "None" and string.find(mobName, string.lower(selectedBossTarget), 1, true) then isMatchingTarget = true end
+                    if selectedBossTarget ~= "None" and string.find(mobName, string.lower(selectedBossTarget), 1, true)
+                        and not (selectedBossTarget == "Warden" and string.find(mobName, "chief", 1, true)) then isMatchingTarget = true end
                 end
 
                 if isMatchingTarget then
@@ -4077,11 +4734,9 @@ end
 
 local function isMobBoss(mobName)
     local lowerName = string.lower(mobName)
-    for _, bossesList in pairs(seaBosses) do
-        for _, bName in ipairs(bossesList) do
-            if string.find(lowerName, string.lower(bName), 1, true) then
-                return true
-            end
+    for _, bName in ipairs(seaBosses[currentSeaIndex] or {}) do
+        if string.find(lowerName, string.lower(bName), 1, true) then
+            return true
         end
     end
     return false
@@ -4091,6 +4746,7 @@ end
 --            TÍNH NĂNG GOM QUÁI MƯỢT MÀ                    --
 -- =========================================================--
 RunService.Heartbeat:Connect(function(deltaTime)
+    if RAID_FIXED.killAuraActive then return end
     if not bringMobsEnabled or not targetEnemy or type(targetEnemy) ~= "userdata" or not targetEnemy:FindFirstChild("HumanoidRootPart") then return end
     if targetEnemy:FindFirstChild("Humanoid") and targetEnemy.Humanoid.Health <= 0 then return end
 
@@ -4105,7 +4761,7 @@ RunService.Heartbeat:Connect(function(deltaTime)
     end)
 
     for _, mob in pairs(enemiesFolder:GetChildren()) do
-        if broughtCount >= (maxBringCount - 1) then break end
+        if broughtCount >= (math.max(maxBringCount, maxAttackTargets) - 1) then break end
 
         if mob ~= targetEnemy and mob:FindFirstChild("HumanoidRootPart") and mob:FindFirstChild("Humanoid") and mob.Humanoid.Health > 0 then
             if not isMobBoss(mob.Name) then
@@ -4131,25 +4787,116 @@ RunService.Heartbeat:Connect(function(deltaTime)
 end)
 
 -- =========================================================--
---     XỬ LÝ ĐÁNH NHANH TỐI ƯU SIÊU TỐC (FAST ATTACK FIXED)  --
+--     FAST ATTACK V3: ĐÁNH NHIỀU MOB CÙNG LÚC (mặc định 2)   --
 -- =========================================================--
 local RegisterAttack, RegisterHit, THit
-pcall(function()
-    local net = ReplicatedStorage:FindFirstChild("Modules") and ReplicatedStorage.Modules:FindFirstChild("Net")
-    if net then
-        RegisterAttack = net:FindFirstChild("RE/RegisterAttack")
-        RegisterHit    = net:FindFirstChild("RE/RegisterHit")
-        THit           = net:FindFirstChild("RE/THit")
-    end
-end)
+local combatRemoteResolvedAt = 0
 
+-- Remote của combat có thể chưa tồn tại ngay lúc script chạy.
+-- Resolver này tự tìm lại định kỳ để Fast Attack không bị kẹt nil vĩnh viễn.
+local function resolveCombatRemotes(force)
+    if not force and tick() - combatRemoteResolvedAt < 2 then return end
+    combatRemoteResolvedAt = tick()
+
+    RegisterAttack, RegisterHit, THit = nil, nil, nil
+
+    pcall(function()
+        local modules = ReplicatedStorage:FindFirstChild("Modules")
+        local net = modules and modules:FindFirstChild("Net")
+        if not net then return end
+
+        local function find(name)
+            return net:FindFirstChild(name) or net:FindFirstChild(name, true)
+        end
+
+        RegisterAttack = find("RE/RegisterAttack")
+        RegisterHit    = find("RE/RegisterHit")
+        THit           = find("RE/THit")
+    end)
+end
+
+resolveCombatRemotes(true)
+
+-- Có thể giảm/tăng tùy ping/server.
+-- 0.025 = tối đa khoảng 40 chu kỳ/giây về phía client,
+-- nhưng server vẫn có thể giới hạn tốc độ thực tế.
+local attackInterval = 0.025
+local attackRadius   = 120   -- đo từ vị trí người chơi (đang bay cao trên đầu quái) -> để rộng hơn bản cũ (70)
 local lastAttackTime = 0
-local attackInterval = 0.015
 
-local function performUltraFastAttackV2()
+-- FIX: số mob đánh cùng lúc lấy từ cài đặt "Fast Attack Targets" (mặc định 2) thay vì hằng số cố định.
+local function getAttackLimit()
+    if RAID_FIXED.killAuraActive then
+        return RAID_FIXED.killAuraMaxTargets
+    end
+    return math.clamp(math.floor(tonumber(maxAttackTargets) or 2), 1, 6)
+end
+
+-- Trả về danh sách {model = Model, hrp = HumanoidRootPart}.
+-- Mục tiêu chính luôn đứng đầu, các mob còn lại ưu tiên mob gần MỤC TIÊU CHÍNH nhất
+-- (mob được gom về cùng 1 chỗ nên sẽ luôn được chọn đủ số lượng).
+local function getAliveAttackTargets(maxTargets)
+    local char = LocalPlayer.Character
+    local playerHrp = char and char:FindFirstChild("HumanoidRootPart")
+    if not playerHrp then return {} end
+
+    local enemiesFolder = workspace:FindFirstChild("Enemies")
+    if not enemiesFolder then return {} end
+
+    local playerPos = playerHrp.Position
+    local anchorPos = playerPos
+    if typeof(targetEnemy) == "Instance" and targetEnemy.Parent then
+        local tHrp = targetEnemy:FindFirstChild("HumanoidRootPart")
+        if tHrp then anchorPos = tHrp.Position end
+    end
+
+    local candidates = {}
+    for _, mob in ipairs(enemiesFolder:GetChildren()) do
+        local hum = mob:FindFirstChildOfClass("Humanoid")
+        local mobHrp = mob:FindFirstChild("HumanoidRootPart")
+
+        if hum and mobHrp and hum.Health > 0 then
+            local distPlayer = (mobHrp.Position - playerPos).Magnitude
+            if distPlayer <= (RAID_FIXED.killAuraActive and RAID_FIXED.killAuraRadius or attackRadius) then
+                candidates[#candidates + 1] = {
+                    model = mob,
+                    hrp = mobHrp,
+                    dist = (mobHrp.Position - anchorPos).Magnitude,
+                    priority = (mob == targetEnemy) and 0 or 1,
+                }
+            end
+        end
+    end
+
+    table.sort(candidates, function(a, b)
+        if a.priority ~= b.priority then
+            return a.priority < b.priority
+        end
+        return a.dist < b.dist
+    end)
+
+    local result = {}
+    local limit = math.min(getAttackLimit(), maxTargets or 20)
+    for _, item in ipairs(candidates) do
+        result[#result + 1] = item
+        if #result >= limit then break end
+    end
+    return result
+end
+
+local function performFastAttackV3()
     if not fastAttackEnabled then return end
-    if not (autoFarmEnabled or autoFarmMaterialEnabled or autoRaidEnabled or _G.Dungeon or _G.AutoLawRaid) then return end
-    
+    resolveCombatRemotes(false)
+    if not (
+        autoFarmEnabled
+        or autoFarmMaterialEnabled
+        or autoRaidEnabled
+        or _G.Dungeon
+        or _G.AutoLawRaid
+    ) then
+        return
+    end
+
     local now = tick()
     if now - lastAttackTime < attackInterval then return end
     lastAttackTime = now
@@ -4157,70 +4904,86 @@ local function performUltraFastAttackV2()
     local char = LocalPlayer.Character
     if not char then return end
 
-    local tool = char:FindFirstChildOfClass("Tool")
-    if not tool then return end
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    if not hum or hum.Health <= 0 or not hrp then return end
 
-    tool:Activate()
+    local tool = char:FindFirstChildOfClass("Tool")
+    if tool then
+        pcall(function()
+            tool:Activate()
+        end)
+    end
 
     if okVU and VirtualUser then
-        VirtualUser:CaptureController()
-        VirtualUser:ClickButton1(Vector2.new(800, 800))
+        pcall(function()
+            VirtualUser:CaptureController()
+            VirtualUser:ClickButton1(Vector2.new(800, 800))
+        end)
     end
 
-    local hrpPlayer = char:FindFirstChild("HumanoidRootPart")
-    if not hrpPlayer then return end
+    local targets = getAliveAttackTargets(getAttackLimit())
+    if #targets == 0 then return end
 
-    local pPos = hrpPlayer.Position
-    local enemiesFolder = workspace:FindFirstChild("Enemies") or workspace
-    local limit = math.max(1, math.floor(maxAttackTargets or 2))
+    -- FIX (chỉ đánh được 1 mob): bản cũ truyền danh sách HRP thô và chỉ gọi RegisterAttack 1 lần
+    -- cho cả 2 RegisterHit -> server chỉ nhận hit đầu. Giờ:
+    --  (1) Gửi 1 gói chuẩn: hit chính + danh sách {model, part} của TẤT CẢ mob.
+    --  (2) Mỗi mob còn lại có thêm 1 cặp RegisterAttack + RegisterHit riêng,
+    --      nên dù server chỉ đọc "hit chính" thì mob thứ 2, 3... vẫn nhận sát thương.
+    local pairList = {}
+    for i = 1, #targets do
+        pairList[i] = { targets[i].model, targets[i].hrp }
+    end
 
-    local candidates = {}
-    for _, mob in pairs(enemiesFolder:GetChildren()) do
-        local mobHrp = mob:FindFirstChild("HumanoidRootPart")
-        local mobHum = mob:FindFirstChild("Humanoid")
-        if mobHrp and mobHum and mobHum.Health > 0 then
-            local d = (mobHrp.Position - pPos).Magnitude
-            if d <= 70 then
-                table.insert(candidates, {hrp = mobHrp, dist = d, isMain = (mob == targetEnemy)})
+    if RegisterHit then
+        if RegisterAttack then
+            pcall(function() RegisterAttack:FireServer(0) end)
+        end
+        pcall(function()
+            RegisterHit:FireServer(targets[1].hrp, pairList)
+        end)
+
+        for i = 2, math.min(#targets, 6) do
+            local t = targets[i]
+            if t.hrp and t.hrp.Parent then
+                if RegisterAttack then
+                    pcall(function() RegisterAttack:FireServer(0) end)
+                end
+                pcall(function()
+                    RegisterHit:FireServer(t.hrp, { { t.model, t.hrp } })
+                end)
             end
         end
+    elseif RegisterAttack then
+        pcall(function() RegisterAttack:FireServer(0) end)
     end
 
-    table.sort(candidates, function(x, y)
-        if x.isMain ~= y.isMain then return x.isMain end
-        return x.dist < y.dist
-    end)
-
-    local hitList = {}
-    for i = 1, math.min(limit, #candidates) do
-        hitList[i] = candidates[i].hrp
-    end
-
-    if #hitList > 0 then
-        if RegisterAttack then RegisterAttack:FireServer(0) end
-        if RegisterHit then
-            for _, targetHrp in ipairs(hitList) do
-                RegisterHit:FireServer(targetHrp, hitList)
-            end
-        end
-        if THit then
-            for _, targetHrp in ipairs(hitList) do
-                THit:FireServer(targetHrp)
+    if THit then
+        for i = 1, #targets do
+            local t = targets[i]
+            if t.hrp and t.hrp.Parent then
+                pcall(function()
+                    THit:FireServer(t.hrp)
+                end)
             end
         end
     end
 end
 
-RunService.Heartbeat:Connect(function()
-    if fastAttackEnabled then
-        pcall(performUltraFastAttackV2)
+-- Vòng lặp riêng giúp Fast Attack không phụ thuộc FPS của Heartbeat.
+task.spawn(function()
+    while true do
+        task.wait(attackInterval)
+        if fastAttackEnabled then
+            pcall(performFastAttackV3)
+        end
     end
 end)
 
 -- VÒNG LẶP CHUYỂN & BAY QUA NHIỀU ĐIỂM FARM MATERIAL KHÁC NHAU (Sea 1 / 2 / 3)
 task.spawn(function()
     while true do
-        task.wait()
+        task.wait(0.05)
         if autoFarmMaterialEnabled then
             pcall(function()
                 -- Không farm được (chưa chọn / material không có ở Sea này) -> chỉ thông báo, không bay lung tung
@@ -4299,14 +5062,17 @@ end)
 -- VÒNG LẶP AUTO FARM CHÍNH
 task.spawn(function()
     while true do
-        task.wait()
+        task.wait(0.05)
         if autoFarmEnabled then
             pcall(function()
+                -- Không khóa Auto Farm ở level 2800; nếu level cao hơn, GetQuestData() dùng quest cuối đã khai báo.
+
                 equipSelectedWeapon()
                 local character = LocalPlayer.Character
                 if character and character:FindFirstChild("HumanoidRootPart") then
                     local hrp = character.HumanoidRootPart
-                    
+
+                    -- Sea 3 level 2600+ phải hoàn tất bước vào Submerged Island trước khi tìm mob.
                     if selectedFarmTarget == "Auto Level" then
                         if autoQuestEnabled and not ClaimQuest() then
                             return -- đang nhận quest, đợi xong mới đi farm
@@ -4362,7 +5128,7 @@ task.spawn(function()
                             local _, _, bMobName, _, bMobPos = GetHauntedQuestData()
                             destinationPos = GetQuestMobSpawn(bMobName, bMobPos) or bMobPos or HAUNTED_CASTLE_POS
                         elseif selectedFarmTarget == "Farm Boss" and selectedBossTarget ~= "None" then
-                            destinationPos = bossSpawnLocations[selectedBossTarget]
+                            destinationPos = GetQuestMobSpawn(selectedBossTarget, bossSpawnLocations[selectedBossTarget]) or bossSpawnLocations[selectedBossTarget]
                         end
 
                         if destinationPos and Q.enterIfNeeded(hrp, destinationPos) then return end

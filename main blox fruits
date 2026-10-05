@@ -47,13 +47,6 @@ end
 local currentFlyTween = nil
 local targetEnemy     = nil
 local currentRaidTween = nil
-
-LocalPlayer.CharacterAdded:Connect(function(newChar)
-    currentFlyTween  = nil
-    currentRaidTween = nil
-    targetEnemy      = nil
-end)
-
 -- CẤU HÌNH & TRẠNG THÁI
 local autoAfkEnabled          = true
 local autoFarmEnabled         = false
@@ -158,6 +151,12 @@ _G.AutoBuyChip  = false
 _G.StartRaid    = false
 _G.Dungeon      = false
 _G.AutoLawRaid  = false
+
+-- CẤU HÌNH AUTO PICKUP FRUIT (nhặt Trái Ác Quỷ rơi trên map)
+_G.AutoPickupFruit        = false
+_G.FruitPickupBusy        = false     -- true khi đang bay đi nhặt (các vòng farm khác tạm dừng)
+_G.FruitPickupDebug       = true      -- in log nhặt trái ra console
+_G.FruitPickupMaxDistance = math.huge -- chỉ nhặt trái trong bán kính này (studs); mặc định: cả map
 _G.RaidKillAura = true   -- Kill Aura khi farm Raid ở đảo 4-5
 _G.RaidKillAuraIsland = 4  -- từ đảo này trở đi dùng Kill Aura
 _G.RaidKillAuraReset = true  -- true: reset (đặt máu = 0 + BreakJoints) quái Raid; false: chỉ gom & đánh
@@ -322,27 +321,27 @@ do
     local QUESTS = {
         [1] = {
             {1,   "BanditQuest1",   1, "Bandit",              V(1059.37, 15.45, 1550.42),     V(1045.96, 27.00, 1560.82)},
-            {10,  "JungleQuest",    1, "Monkey",              V(-1598.09, 35.55, 153.38),     V(-1448.52, 67.85, 11.47)},
-            {15,  "JungleQuest",    2, "Gorilla",             V(-1598.09, 35.55, 153.38),     V(-1129.88, 40.46, -525.42)},
-            {30,  "BuggyQuest1",    1, "Pirate",              V(-1141.07, 4.10, 3831.55),     V(-1103.51, 13.75, 3896.09)},
-            {40,  "BuggyQuest1",    2, "Brute",               V(-1141.07, 4.10, 3831.55),     V(-1140.08, 14.81, 4322.92)},
-            {60,  "DesertQuest",    1, "Desert Bandit",       V(894.49, 5.14, 4392.43),       V(924.80, 6.45, 4481.59)},
-            {75,  "DesertQuest",    2, "Desert Officer",      V(894.49, 5.14, 4392.43),       V(1608.28, 8.61, 4371.01)},
-            {90,  "SnowQuest",      1, "Snow Bandit",         V(1389.74, 88.15, -1298.91),    V(1354.35, 87.27, -1393.95)},
-            {100, "SnowQuest",      2, "Snowman",             V(1389.74, 88.15, -1298.91),    V(1201.64, 144.58, -1550.07)},
-            {120, "MarineQuest2",   1, "Chief Petty Officer", V(-5039.59, 27.35, 4324.68),    V(-4881.23, 22.65, 4273.75)},
-            {150, "SkyQuest",       1, "Sky Bandit",          V(-4839.53, 716.37, -2619.44),  V(-4953.21, 295.74, -2899.23)},
-            {175, "SkyQuest",       2, "Dark Master",         V(-4839.53, 716.37, -2619.44),  V(-5259.84, 391.40, -2229.04)},
-            {190, "PrisonerQuest",  1, "Prisoner",            V(5308.93, 1.66, 475.12),       V(5098.97, -0.32, 474.24)},
-            {210, "PrisonerQuest",  2, "Dangerous Prisoner",  V(5308.93, 1.66, 475.12),       V(5654.56, 15.63, 866.30)},
-            {250, "ColosseumQuest", 1, "Toga Warrior",        V(-1580.05, 6.35, -2986.48),    V(-1820.21, 51.68, -2740.67)},
-            {275, "ColosseumQuest", 2, "Gladiator",           V(-1580.05, 6.35, -2986.48),    V(-1292.84, 56.38, -3339.03)},
-            {300, "MagmaQuest",     1, "Military Soldier",    V(-5313.37, 10.95, 8515.29),    V(-5411.16, 11.08, 8454.29)},
-            {325, "MagmaQuest",     2, "Military Spy",        V(-5313.37, 10.95, 8515.29),    V(-5802.87, 86.26, 8828.86)},
+            {10,  "JungleQuest",    1, "Monkey",              V(-1685.02, 52.65, 172.84),     V(-1655.70, 18.39, 238.73)},
+            {15,  "JungleQuest",    2, "Gorilla",             V(-1685.02, 52.65, 172.8),     V(-1129.88, 40.46, -525.42)},
+            {30,  "BuggyQuest1",    1, "Pirate",              V(-1150.39, 18.93, 3861.32),     V(-1080.90, 27.30, 3961.55)},
+            {40,  "BuggyQuest1",    2, "Brute",               V(-1150.39, 18.93, 3861.32),     V(-1140.08, 14.81, 4322.92)},
+            {60,  "DesertQuest",    1, "Desert Bandit",       V(867.47, 13.51, 4455.73),       V(928.33, 5.90, 4513.31)},
+            {75,  "DesertQuest",    2, "Desert Officer",      V(867.47, 13.51, 4455.73),       V(1561.47, 13.73, 4162.75)},
+            {90,  "SnowQuest",      1, "Snow Bandit",         V(1406.16, 77.87, -1311.45),    V(1354.35, 87.27, -1393.95)},
+            {100, "SnowQuest",      2, "Snowman",             V(1406.16, 77.87, -1311.45),    V(1148.34, 97.52, -1661.28)},
+            {120, "MarineQuest2",   1, "Chief Petty Officer", V(-4698.47, 9.88, 4226.30),    V(-4822.64, 4.18, 4098.37)},
+            {150, "SkyQuest",       1, "Sky Bandit",          V(-5401.33, 415.73, -694.87),  V(-5118.66, 279.39, -1085.51)},
+            {175, "SkyQuest",       2, "Dark Master",         V(-5401.33, 415.73, -694.87),  V(-5310.52, 501.51, -356.85)},
+            {190, "PrisonerQuest",  1, "Prisoner",            V(5204.00, 24.55, 737.12),       V(5284.89, 19.55, 509.94)},
+            {210, "PrisonerQuest",  2, "Dangerous Prisoner",  V(5204.00, 24.55, 737.12),      V(5286.47, 19.55, 959.17)},
+            {250, "ColosseumQuest", 1, "Toga Warrior",        V(-1339.27, 17.48, -2926.53),    V(-1730.26, 12.21, -2715.77)},
+            {275, "ColosseumQuest", 2, "Gladiator",           V(-1339.27, 17.48, -2926.53),    V(-1159.36, 12.21, -3222.02)},
+            {300, "MagmaQuest",     1, "Military Soldier",    V(-5310.19, 23.47, 8485.85),    V(-5411.16, 11.08, 8454.29)},
+            {325, "MagmaQuest",     2, "Military Spy",        V(-5310.19, 23.47, 8485.85),    V(-5952.57, 77.32, 8891.88)},
             {375, "FishmanQuest",   1, "Fishman Warrior",     V(61122.65, 18.47, 1568.17),    V(60844.11, 98.46, 1298.40)},
             {400, "FishmanQuest",   2, "Fishman Commando",    V(61122.65, 18.47, 1568.17),    V(61738.40, 64.21, 1433.84)},
-            {450, "SkyExp1Quest",   1, "God's Guard",         V(-4721.89, 843.87, -1949.97),  V(-4710.04, 845.28, -1927.31)},
-            {475, "SkyExp1Quest",   2, "Shanda",              V(-7859.10, 5544.19, -381.48),  V(-7678.49, 5566.40, -502.39)},
+            {450, "SkyExp1Quest",   1, "God's Guard",         V(-4313.20, 1089.89, -556.23),  V(-4261.53, 1089.61, -404.62)},
+            {475, "SkyExp1Quest",   2, "Shanda",              V(-5951.26, 5470.99, 2085.70),  V(-5925.16, 5469.16, 1847.35)},
             {525, "SkyExp2Quest",   1, "Royal Squad",         V(-7906.82, 5634.66, -1411.99), V(-7624.25, 5658.13, -1467.35)},
             {550, "SkyExp2Quest",   2, "Royal Soldier",       V(-7906.82, 5634.66, -1411.99), V(-7836.75, 5606.91, -1450.75)},
             {625, "FountainQuest",  1, "Galley Pirate",       V(5254.60, 38.50, 4049.70),     V(5557.17, 152.33, 3998.78)},
@@ -508,7 +507,7 @@ end
 -- (Gom biến vào bảng Q vì Luau giới hạn 200 biến local ở cấp cao nhất)
 local Q = {
     QUEST_DEBUG = true,          -- in log [Quest] ra console (F9)
-    QUEST_HIDE_GRACE = 2.5,      -- quest vừa xong -> chờ rồi nhận quest mới
+    QUEST_HIDE_GRACE = 0.5,      -- quest vừa xong -> chờ rồi nhận quest mới
     QUEST_LOST_WAIT = 10,        -- GUI tắt khi CHƯA đánh đủ -> chờ lâu hơn
     QUEST_RETRY_DELAY = 4,       -- tối thiểu giữa 2 lần gọi StartQuest
     QUEST_RESPAWN_WAIT = 5,      -- chờ GUI load lại sau khi hồi sinh
@@ -2026,6 +2025,8 @@ local RAID_FIXED = {
     auraGroundY = 0,
     baseReady = false,
     baseIslands = {},
+    entered = false,      -- đã thật sự vào map Raid (đứng gần đảo Raid) trong lượt Raid này
+    mapRadius = 800,      -- bán kính (studs) quanh đảo Raid được tính là "đã vào map Raid"
     flightTween = nil,
     lockConnection = nil,
     lockEnemy = nil,
@@ -2249,6 +2250,7 @@ local function isRaidActive()
         end
 
         RAID_FIXED.activeReason = nil
+        RAID_FIXED.entered = false -- Raid kết thúc -> lượt sau phải vào map lại mới farm
         return false
     end)
     return ok and active == true
@@ -2263,6 +2265,23 @@ local function getPivotPosition(obj)
         return obj:GetPivot()
     end)
     return ok and cf or nil
+end
+
+-- FIX: chỉ coi là "đã vào map Raid" khi nhân vật thật sự đứng gần một đảo Raid
+-- (server đã dịch chuyển người chơi vào). Trả về: đã vào map?, khoảng cách tới đảo gần nhất.
+local function isInRaidMap()
+    local hrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+    if not hrp then return false, math.huge end
+
+    local best = math.huge
+    for i = 1, 8 do
+        local cf = getPivotPosition(getRaidIsland(i))
+        if cf then
+            local d = (cf.Position - hrp.Position).Magnitude
+            if d < best then best = d end
+        end
+    end
+    return best <= RAID_FIXED.mapRadius, best
 end
 
 local function cancelRaidFlight()
@@ -3233,14 +3252,32 @@ task.spawn(function()
                         end
                     end
                 elseif farmOn and not RAID_FIXED.running then
-                    task.spawn(function()
-                        local ok, err = pcall(farmRaidIslands)
-                        if not ok then
-                            RAID_FIXED.running = false
-                            RAID_FIXED.lastStatus = "Raid lỗi: " .. tostring(err)
-                            raidLog("farmRaidIslands error:", err)
+                    -- FIX: Raid đã bắt đầu nhưng CHỈ farm khi nhân vật đã vào map Raid.
+                    -- Chưa vào thì đứng yên chờ server dịch chuyển (không bay / không ghim vị trí).
+                    local inMap, dist = isInRaidMap()
+                    if inMap then
+                        RAID_FIXED.entered = true
+                    end
+
+                    if RAID_FIXED.entered then
+                        task.spawn(function()
+                            local ok, err = pcall(farmRaidIslands)
+                            if not ok then
+                                RAID_FIXED.running = false
+                                RAID_FIXED.lastStatus = "Raid lỗi: " .. tostring(err)
+                                raidLog("farmRaidIslands error:", err)
+                            end
+                        end)
+                    else
+                        -- Nhả điều khiển để server dịch chuyển nhân vật vào map Raid được
+                        if RAID_FIXED.holdCF or RAID_FIXED.flying then
+                            cancelRaidFlight()
+                            setRaidHold(nil)
                         end
-                    end)
+                        RAID_FIXED.lastStatus = (dist == math.huge)
+                            and "Chờ vào map Raid (chưa thấy đảo Raid)..."
+                            or string.format("Chờ vào map Raid... (cách đảo gần nhất %d studs)", math.floor(dist))
+                    end
                 end
             elseif not startOn then
                 if RAID_FIXED.running or RAID_FIXED.starting or RAID_FIXED.holdCF or RAID_FIXED.noclipEnabled or RAID_FIXED.flying then
@@ -3268,6 +3305,7 @@ LocalPlayer.CharacterAdded:Connect(function()
     cancelRaidFlight()
     setRaidNoclip(false)
     RAID_FIXED.running = false
+    RAID_FIXED.entered = false
     RAID_FIXED.currentIsland = 0
 end)
 end
@@ -3322,9 +3360,49 @@ createToggleFeature(gachaPage, "AutoStoreFruitToggle", "Auto Store Fruit", "Tự
     autoStoreFruitEnabled = state
 end)
 
-createToggleFeature(gachaPage, "AutoRandomFruitToggle", "Auto Random Fruit", "Mua từ xa (không cần bay tới NPC), game giới hạn 2 giờ/lần - nên bật kèm Auto Store Fruit", 3, autoRandomFruitEnabled, function(state)
-    autoRandomFruitEnabled = state
+createToggleFeature(gachaPage, "AutoPickupFruitToggle", "Auto Pickup Fruit", "Tự động bay tới nhặt Trái Ác Quỷ rơi trên map (nên bật kèm Auto Store Fruit)", 4, _G.AutoPickupFruit, function(state)
+    _G.AutoPickupFruit = state
+    if not state then
+        _G.FruitPickupBusy = false
+        stopAllFlying() -- tắt là đứng yên ngay, không bay tiếp tới trái
+    end
 end)
+
+createToggleFeature(gachaPage, "AutoRandomFruitToggle", "Auto Random Fruit", "Thử mua từ xa; nếu server từ chối sẽ tự bay tới Zioles bấm mua. Game giới hạn 2 giờ/lần, cần Lv50+ - nên bật kèm Auto Store Fruit", 3, autoRandomFruitEnabled, function(state)
+    autoRandomFruitEnabled = state
+    if not state then _G.FruitPickupBusy = false end
+end)
+
+-- Thẻ trạng thái Random/Store trên tab Gacha (IIFE để không tăng số local của chunk chính)
+;(function()
+    local card = Instance.new("Frame")
+    card.Size = UDim2.new(1, 0, 0, 62)
+    card.BackgroundColor3 = BANANA_CARD
+    card.LayoutOrder = 10
+    card.Parent = gachaPage
+    addCorner(card, 8)
+    addStroke(card, BANANA_CARD_BORDER, 1)
+
+    local txt = Instance.new("TextLabel")
+    txt.Size = UDim2.new(1, -24, 1, -8)
+    txt.Position = UDim2.new(0, 12, 0, 4)
+    txt.BackgroundTransparency = 1
+    txt.TextColor3 = Color3.fromRGB(190, 190, 200)
+    txt.TextSize = 11
+    txt.Font = Enum.Font.Gotham
+    txt.TextWrapped = true
+    txt.TextXAlignment = Enum.TextXAlignment.Left
+    txt.TextYAlignment = Enum.TextYAlignment.Top
+    txt.Parent = card
+
+    task.spawn(function()
+        while txt.Parent do
+            txt.Text = "🎲 Random: " .. tostring(_G.RandomFruitStatus or "-")
+                .. "\n📦 Store: " .. tostring(_G.StoreFruitStatus or "-")
+            task.wait(0.5)
+        end
+    end)
+end)()
 
 -- KHUNG HIỂN THỊ DANH SÁCH TRÁI ÁC QUỶ ĐANG BÁN TRONG SHOP
 local stockFrame = Instance.new("Frame")
@@ -3745,6 +3823,191 @@ createInputFeature(settingsPage, "Fast Attack Targets", maxAttackTargets, 18, fu
     maxAttackTargets = math.clamp(math.floor(tonumber(val) or 2), 1, 6)
 end)
 
+-- =========================================================
+--                      REDEEM CODE
+-- =========================================================
+-- Hàng "Redeem Code" + nút "Click" (tab Config).
+--  * Ô nhập có chữ  -> chỉ nhập đúng code đó.
+--  * Ô nhập để trống -> nhập lần lượt toàn bộ code trong REDEEM_CODES.
+-- Code hết hạn sẽ bị server từ chối (không gây lỗi). Bạn tự thêm/xoá code trong bảng bên dưới.
+-- Bọc trong hàm ẩn danh để không tốn thêm biến local ở cấp cao nhất (giới hạn 200 local của Luau).
+;(function()
+    local REDEEM_CODES = {
+        "Sub2Fer999", "Enyu_is_Pro", "Magicbus", "JCWK", "Starcodeheo",
+        "Bluxxy", "fudd10_v2", "Sub2UncleKizaru", "TantaiGaming", "kittgaming",
+        "Axiore", "StrawHatMaine", "Sub2Daigrock", "Sub2OfficialNoobie",
+        "SUB2GAMERROBOT_EXP1", "SUB2NOOBMASTER123", "THEGREATACE", "BIGNEWS",
+    }
+    local REDEEM_DELAY = 0.7   -- giây chờ giữa 2 code (tránh bị server chặn spam)
+
+    local redeemBusy = false
+    local statusLabel, clickBtn, codeBox
+
+    local function notify(text)
+        pcall(function()
+            game:GetService("StarterGui"):SetCore("SendNotification", {
+                Title = "Redeem Code", Text = text, Duration = 5,
+            })
+        end)
+    end
+
+    local function setStatus(text)
+        if statusLabel then statusLabel.Text = text end
+    end
+
+    -- Gửi 1 code lên server (có timeout để không treo vĩnh viễn)
+    local function redeemOne(code)
+        local remotes = ReplicatedStorage:FindFirstChild("Remotes")
+        local remote  = remotes and remotes:FindFirstChild("Redeem")
+        if not remote then return false, "Không tìm thấy Remotes.Redeem" end
+
+        local done, ok, res = false, false, nil
+        task.spawn(function()
+            ok, res = pcall(function() return remote:InvokeServer(code) end)
+            done = true
+        end)
+
+        local t0 = tick()
+        while not done and tick() - t0 < 6 do task.wait(0.05) end
+        if not done then return false, "Server không phản hồi" end
+        if not ok then return false, tostring(res) end
+        return true, res
+    end
+
+    local function redeemCodes(list)
+        if redeemBusy then return end
+        redeemBusy = true
+        clickBtn.Text = "..."
+
+        local sent = 0
+        pcall(function()
+            for i, code in ipairs(list) do
+                setStatus("Đang nhập " .. i .. "/" .. #list .. ": " .. code)
+                local ok, res = redeemOne(code)
+                if ok then sent = sent + 1 end
+                print("[Redeem]", code, "->", ok and tostring(res) or ("LỖI: " .. tostring(res)))
+                task.wait(REDEEM_DELAY)
+            end
+        end)
+
+        setStatus("Xong: đã gửi " .. sent .. "/" .. #list .. " code (xem kết quả ở F9)")
+        notify("Đã gửi " .. sent .. "/" .. #list .. " code. Xem F9 để biết code nào nhận được.")
+        clickBtn.Text = "Click"
+        redeemBusy = false
+    end
+
+    -- Config có nhiều thẻ -> cho tự giãn vùng cuộn để không bị cắt mất thẻ cuối
+    settingsPage.AutomaticCanvasSize = Enum.AutomaticSize.Y
+    settingsPage.CanvasSize = UDim2.new(0, 0, 0, 0)
+
+    -- Ô nhập code tuỳ chọn
+    local inputCard = Instance.new("Frame")
+    inputCard.Name = "RedeemInputCard"
+    inputCard.Size = UDim2.new(1, 0, 0, 38)
+    inputCard.BackgroundColor3 = BANANA_CARD
+    inputCard.LayoutOrder = 19
+    inputCard.Parent = settingsPage
+    addCorner(inputCard, 6)
+    addStroke(inputCard, BANANA_CARD_BORDER, 1).Transparency = 0.35
+
+    local inputTitle = Instance.new("TextLabel")
+    inputTitle.Size = UDim2.new(0.4, 0, 1, 0)
+    inputTitle.Position = UDim2.new(0, 12, 0, 0)
+    inputTitle.BackgroundTransparency = 1
+    inputTitle.Text = "Nhập code (tuỳ chọn)"
+    inputTitle.TextColor3 = Color3.fromRGB(255, 255, 255)
+    inputTitle.TextSize = 12
+    inputTitle.Font = Enum.Font.GothamMedium
+    inputTitle.TextXAlignment = Enum.TextXAlignment.Left
+    inputTitle.Parent = inputCard
+
+    codeBox = Instance.new("TextBox")
+    codeBox.Size = UDim2.new(0.55, -12, 0, 26)
+    codeBox.Position = UDim2.new(0.45, 0, 0.5, -13)
+    codeBox.BackgroundColor3 = BANANA_SIDEBAR
+    codeBox.TextColor3 = Color3.fromRGB(255, 255, 255)
+    codeBox.PlaceholderText = "Để trống = nhập tất cả"
+    codeBox.PlaceholderColor3 = Color3.fromRGB(130, 130, 140)
+    codeBox.Text = ""
+    codeBox.TextSize = 12
+    codeBox.Font = Enum.Font.GothamMedium
+    codeBox.ClearTextOnFocus = false
+    codeBox.Parent = inputCard
+    addCorner(codeBox, 6)
+    local boxStroke = addStroke(codeBox, BANANA_CARD_BORDER, 1)
+    codeBox.Focused:Connect(function()
+        TweenService:Create(boxStroke, TweenInfo.new(0.12), {Color = BANANA_YELLOW}):Play()
+    end)
+    codeBox.FocusLost:Connect(function()
+        TweenService:Create(boxStroke, TweenInfo.new(0.12), {Color = BANANA_CARD_BORDER}):Play()
+    end)
+
+    -- Hàng "Redeem Code" + nút "Click"
+    local row = Instance.new("Frame")
+    row.Name = "RedeemRow"
+    row.Size = UDim2.new(1, 0, 0, 50)
+    row.BackgroundColor3 = BANANA_CARD
+    row.LayoutOrder = 20
+    row.Parent = settingsPage
+    addCorner(row, 8)
+    addStroke(row, BANANA_CARD_BORDER, 1).Transparency = 0.35
+
+    local rowTitle = Instance.new("TextLabel")
+    rowTitle.Size = UDim2.new(1, -110, 0, 20)
+    rowTitle.Position = UDim2.new(0, 12, 0, 6)
+    rowTitle.BackgroundTransparency = 1
+    rowTitle.Text = "Redeem Code"
+    rowTitle.TextColor3 = Color3.fromRGB(255, 255, 255)
+    rowTitle.TextSize = 12
+    rowTitle.Font = Enum.Font.GothamMedium
+    rowTitle.TextXAlignment = Enum.TextXAlignment.Left
+    rowTitle.Parent = row
+
+    statusLabel = Instance.new("TextLabel")
+    statusLabel.Size = UDim2.new(1, -110, 0, 16)
+    statusLabel.Position = UDim2.new(0, 12, 0, 28)
+    statusLabel.BackgroundTransparency = 1
+    statusLabel.Text = "Nhấn Click để nhập code"
+    statusLabel.TextColor3 = Color3.fromRGB(140, 140, 156)
+    statusLabel.TextSize = 10
+    statusLabel.Font = Enum.Font.Gotham
+    statusLabel.TextXAlignment = Enum.TextXAlignment.Left
+    statusLabel.TextTruncate = Enum.TextTruncate.AtEnd
+    statusLabel.Parent = row
+
+    clickBtn = Instance.new("TextButton")
+    clickBtn.Size = UDim2.new(0, 84, 0, 30)
+    clickBtn.Position = UDim2.new(1, -96, 0.5, -15)
+    clickBtn.BackgroundColor3 = BANANA_YELLOW
+    clickBtn.Text = "Click"
+    clickBtn.TextColor3 = BANANA_TEXT_ON
+    clickBtn.TextSize = 12
+    clickBtn.Font = Enum.Font.GothamBold
+    clickBtn.AutoButtonColor = false
+    clickBtn.Parent = row
+    addCorner(clickBtn, 8)
+    addStroke(clickBtn, Color3.fromRGB(150, 118, 20), 1.5)
+
+    clickBtn.MouseEnter:Connect(function()
+        TweenService:Create(clickBtn, TweenInfo.new(0.12), {BackgroundColor3 = Color3.fromRGB(255, 226, 110)}):Play()
+    end)
+    clickBtn.MouseLeave:Connect(function()
+        TweenService:Create(clickBtn, TweenInfo.new(0.12), {BackgroundColor3 = BANANA_YELLOW}):Play()
+    end)
+
+    clickBtn.MouseButton1Click:Connect(function()
+        if redeemBusy then return end
+        local typed = (codeBox.Text:gsub("%s+", ""))
+        task.spawn(function()
+            if typed ~= "" then
+                redeemCodes({typed})
+            else
+                redeemCodes(REDEEM_CODES)
+            end
+        end)
+    end)
+end)()
+
 -- HOÀN THIỆN GIAO DIỆN (viền thẻ, hover, thông báo)
 do
     -- thẻ nào chưa có viền thì thêm viền mảnh cho đồng bộ
@@ -3877,7 +4140,7 @@ RunService.Stepped:Connect(function()
         else waterPlatform.CanCollide = false end
     else waterPlatform.CanCollide = false end
 
-    if autoFarmEnabled or autoFarmMaterialEnabled or autoRaidEnabled or _G.Dungeon or _G.AutoLawRaid or autoChestEnabled then
+    if autoFarmEnabled or autoFarmMaterialEnabled or autoRaidEnabled or _G.Dungeon or _G.AutoLawRaid or autoChestEnabled or _G.FruitPickupBusy then
         local character = LocalPlayer.Character
         if character then
             for _, part in pairs(character:GetDescendants()) do
@@ -4015,37 +4278,36 @@ task.spawn(function()
     end
 end)
 
--- LOGIC AUTO RANDOM FRUIT (REMOTE-FIRST / KHÔNG CẦN BAY TỚI NPC)
--- Cải tiến:
--- 1) Luôn lấy CommF_ mới trước mỗi lần mua.
--- 2) Gọi "Cousin","Check" trước "Cousin","Buy" để đồng bộ trạng thái NPC nếu server yêu cầu.
--- 3) Kiểm tra thay đổi inventory theo tên Tool, không chỉ dựa vào số lượng trái.
--- 4) Không dùng cooldown 2 giờ ngay khi lần gọi thất bại.
--- 5) Tách hoàn toàn khỏi hệ thống bay Raid/Farm.
-
+-- LOGIC AUTO RANDOM FRUIT v2 (ZIOLES' GACHA BOX)
+-- Sửa lỗi:
+-- 1) Nhận diện trái bằng Tool.ToolTip == "Blox Fruit" / con "Fruit" / thuộc tính OriginalName (tên Tool không nhất thiết có chữ "Fruit"
+--    nên bản cũ không bao giờ thấy trái mới -> báo "chưa mua được" rồi lặp lại).
+-- 2) Xác nhận mua bằng trái mới HOẶC Beli giảm (Auto Store có thể cất trái đi trước khi kịp đếm).
+-- 3) Kết quả không xác nhận chỉ chờ 5 phút thử lại, không khoá 2 giờ như khi mua thành công.
+-- 4) Remote bị từ chối -> tự bay tới NPC Zioles (Blox Fruit Gacha), mở Gacha Box và bấm nút mua như người chơi thật.
+-- 5) Ghi trạng thái từng bước vào _G.RandomFruitStatus (hiện trên tab Gacha) để biết chính xác đang kẹt ở đâu.
 task.spawn(function()
     local RF_DEBUG            = true
-    local RF_COOLDOWN        = 7200 + 30
-    local RF_RETRY            = 30
-    local RF_CHECK_DELAY      = 0.25
-    local RF_RESULT_WAIT      = 2.5
+    local RF_COOLDOWN         = 7200 + 30
+    local RF_RETRY            = 60      -- remote + UI đều thất bại rõ ràng
+    local RF_RETRY_UNCONFIRMED = 300    -- server trả về nhưng không thấy trái/Beli đổi
 
-    local nextBuyAt           = 0
-    local wasEnabled          = false
-    local successfulPurchase  = false
+    local nextBuyAt   = 0
+    local wasEnabled  = false
 
-    local function flog(...)
-        if RF_DEBUG then
-            print("[FruitRemote]", ...)
-        end
+    _G.RandomFruitStatus = "Đang tắt"
+
+    local function setStatus(...)
+        local parts = {}
+        for i = 1, select("#", ...) do parts[#parts + 1] = tostring((select(i, ...))) end
+        _G.RandomFruitStatus = table.concat(parts, " ")
+        if RF_DEBUG then print("[RandomFruit]", _G.RandomFruitStatus) end
     end
 
     local function getCommF()
         local remotes = ReplicatedStorage:FindFirstChild("Remotes")
         local commF = remotes and remotes:FindFirstChild("CommF_")
-        if commF and commF:IsA("RemoteFunction") then
-            return commF
-        end
+        if commF and commF:IsA("RemoteFunction") then return commF end
         return nil
     end
 
@@ -4055,123 +4317,229 @@ task.spawn(function()
         return beli and tonumber(beli.Value) or nil
     end
 
-    -- Snapshot inventory để phát hiện Tool trái mới ngay cả khi Beli cập nhật chậm.
-    local function snapshotFruitTools()
-        local snapshot = {}
+    -- Dùng chung cho Auto Store Fruit
+    _G.IsFruitTool = function(tool)
+        if not tool or not tool:IsA("Tool") then return false end
+        if tool.ToolTip == "Blox Fruit" then return true end
+        if tool:FindFirstChild("Fruit") ~= nil then return true end
+        if tool:GetAttribute("Fruit") ~= nil or tool:GetAttribute("OriginalName") ~= nil then return true end
+        return string.find(string.lower(tool.Name), "fruit", 1, true) ~= nil
+    end
 
+    -- Snapshot: số lượng theo tên Tool (Backpack + đang cầm)
+    local function snapshotFruitTools()
+        local snap = {}
         local function scan(container)
             if not container then return end
-
             for _, tool in ipairs(container:GetChildren()) do
-                if tool:IsA("Tool") then
-                    local isFruit =
-                        tool:FindFirstChild("Fruit") ~= nil
-                        or tool:GetAttribute("Fruit") ~= nil
-                        or string.find(string.lower(tool.Name), " fruit", 1, true) ~= nil
-
-                    if isFruit then
-                        snapshot[tool.Name] = (snapshot[tool.Name] or 0) + 1
-                    end
-                end
+                if _G.IsFruitTool(tool) then snap[tool.Name] = (snap[tool.Name] or 0) + 1 end
             end
         end
-
         scan(LocalPlayer:FindFirstChild("Backpack"))
         scan(LocalPlayer.Character)
-
-        return snapshot
+        return snap
     end
 
-    local function inventoryChanged(before, after)
-        for name, countAfter in pairs(after) do
-            if countAfter > (before[name] or 0) then
-                return true, name
-            end
-        end
-        return false, nil
-    end
-
-    local function describeResult(label, ok, result)
-        if not ok then
-            flog(label, "ERROR:", tostring(result))
-            return
-        end
-
-        if type(result) == "table" then
+    local function describe(v)
+        if type(v) == "table" then
             local parts = {}
-            for k, v in pairs(result) do
-                parts[#parts + 1] = tostring(k) .. "=" .. tostring(v)
-            end
-            flog(label, "OK:", "{" .. table.concat(parts, ", ") .. "}")
-        else
-            flog(label, "OK:", tostring(result))
+            for k, val in pairs(v) do parts[#parts + 1] = tostring(k) .. "=" .. tostring(val) end
+            return "{" .. table.concat(parts, ", ") .. "}"
         end
+        return tostring(v)
     end
 
-    local function remoteBuyRandomFruit()
-        local commF = getCommF()
-        if not commF then
-            return false, "Không tìm thấy Remotes.CommF_"
+    -- Có trái mới hoặc Beli giảm so với trước khi mua?
+    local function purchaseConfirmed(beliBefore, snapBefore)
+        local beliNow = getBeli()
+        if beliBefore and beliNow and beliNow < beliBefore then
+            return true, "Beli giảm " .. tostring(beliBefore - beliNow)
         end
-
-        local beliBefore = getBeli()
-        local inventoryBefore = snapshotFruitTools()
-
-        -- Một số bản server dùng bước Check trước khi Buy.
-        local checkOk, checkResult = pcall(function()
-            return commF:InvokeServer("Cousin", "Check")
-        end)
-        describeResult("Cousin/Check", checkOk, checkResult)
-
-        task.wait(RF_CHECK_DELAY)
-
-        local buyOk, buyResult = pcall(function()
-            return commF:InvokeServer("Cousin", "Buy")
-        end)
-        describeResult("Cousin/Buy", buyOk, buyResult)
-
-        if not buyOk then
-            return false, "Remote Buy lỗi: " .. tostring(buyResult)
+        for name, n in pairs(snapshotFruitTools()) do
+            if n > (snapBefore[name] or 0) then return true, "Nhận trái: " .. name end
         end
+        return false
+    end
 
-        -- Chờ ngắn để Backpack/Character cập nhật.
-        local deadline = tick() + RF_RESULT_WAIT
-        while tick() < deadline do
+    local function waitConfirm(beliBefore, snapBefore, seconds)
+        local deadline = tick() + seconds
+        repeat
+            local ok, why = purchaseConfirmed(beliBefore, snapBefore)
+            if ok then return true, why end
             task.wait(0.25)
+        until tick() >= deadline
+        return false
+    end
 
-            local beliAfter = getBeli()
-            local inventoryAfter = snapshotFruitTools()
-            local changed, fruitName = inventoryChanged(inventoryBefore, inventoryAfter)
+    -- ===== CÁCH 1: REMOTE (không cần bay) =====
+    local function tryRemote()
+        local commF = getCommF()
+        if not commF then return "fail", "Không thấy Remotes.CommF_" end
 
-            if changed then
-                flog("✅ Nhận trái mới:", fruitName or "Unknown")
-                return true, "Inventory thay đổi"
+        local beliBefore, snapBefore = getBeli(), snapshotFruitTools()
+
+        local okC, resC = pcall(function() return commF:InvokeServer("Cousin", "Check") end)
+        setStatus("Remote Check:", okC and describe(resC) or ("LỖI " .. tostring(resC)))
+        task.wait(0.3)
+
+        local okB, resB = pcall(function() return commF:InvokeServer("Cousin", "Buy") end)
+        if not okB then return "fail", "Remote Buy lỗi: " .. tostring(resB) end
+        setStatus("Remote Buy trả về:", describe(resB))
+
+        local ok, why = waitConfirm(beliBefore, snapBefore, 4)
+        if ok then return "success", why end
+        return "unconfirmed", "Buy trả về " .. describe(resB) .. " nhưng không thấy trái/Beli đổi"
+    end
+
+    -- ===== CÁCH 2: GIAO DIỆN (bay tới Zioles, bấm nút như người chơi) =====
+    local function guiVisible(obj, playerGui)
+        local g = obj
+        while g and g ~= playerGui do
+            if g:IsA("GuiObject") and not g.Visible then return false end
+            if g:IsA("ScreenGui") and not g.Enabled then return false end
+            g = g.Parent
+        end
+        return true
+    end
+
+    local function buttonText(btn)
+        local t = ""
+        pcall(function()
+            if btn:IsA("TextButton") then t = btn.Text end
+            for _, d in ipairs(btn:GetDescendants()) do
+                if d:IsA("TextLabel") or d:IsA("TextButton") then t = t .. " " .. d.Text end
             end
+        end)
+        return string.lower(t)
+    end
 
-            -- Không bắt buộc Beli phải giảm: server có thể cập nhật trễ.
-            if beliBefore and beliAfter and beliAfter < beliBefore then
-                flog("✅ Beli thay đổi:", beliBefore, "->", beliAfter)
-                return true, "Beli đã giảm"
+    -- Tìm nút đang hiện theo hàm điều kiện
+    local function findButton(pred)
+        local pg = LocalPlayer:FindFirstChild("PlayerGui")
+        if not pg then return nil end
+        for _, d in ipairs(pg:GetDescendants()) do
+            if (d:IsA("TextButton") or d:IsA("ImageButton")) and guiVisible(d, pg) and pred(d) then
+                return d
             end
         end
+        return nil
+    end
 
-        -- Nếu remote trả về true, coi là server đã chấp nhận giao dịch;
-        -- vẫn không đặt cooldown dài nếu kết quả không xác nhận rõ.
-        if buyResult == true then
-            return true, "Server trả về true"
+    -- Bấm nút bằng chuột ảo (giống click thật); dự phòng firesignal
+    local function clickButton(btn)
+        local done = false
+        pcall(function()
+            local vim = game:GetService("VirtualInputManager")
+            local inset = game:GetService("GuiService"):GetGuiInset()
+            local pos = btn.AbsolutePosition + btn.AbsoluteSize / 2
+            vim:SendMouseButtonEvent(pos.X, pos.Y + inset.Y, 0, true, game, 0)
+            task.wait(0.05)
+            vim:SendMouseButtonEvent(pos.X, pos.Y + inset.Y, 0, false, game, 0)
+            done = true
+        end)
+        if not done and typeof(firesignal) == "function" then
+            pcall(function() firesignal(btn.MouseButton1Click); done = true end)
         end
+        return done
+    end
 
-        if type(buyResult) == "string" then
-            local low = string.lower(buyResult)
-            if string.find(low, "success", 1, true)
-                or string.find(low, "bought", 1, true)
-                or string.find(low, "purchase", 1, true)
-                or string.find(low, "fruit", 1, true) then
-                return true, buyResult
+    local function findGachaNPC()
+        local npcs = workspace:FindFirstChild("NPCs")
+        local function match(inst)
+            local n = string.lower(inst.Name)
+            return inst:IsA("Model") and (string.find(n, "gacha", 1, true) or string.find(n, "zioles", 1, true))
+        end
+        if npcs then
+            for _, d in ipairs(npcs:GetDescendants()) do
+                if match(d) then return d end
             end
         end
+        for _, d in ipairs(workspace:GetDescendants()) do
+            if match(d) then return d end
+        end
+        return nil
+    end
 
-        return false, "Server không xác nhận mua thành công"
+    local function tryUI()
+        local npc = findGachaNPC()
+        if not npc then return "fail", "Không thấy NPC Blox Fruit Gacha (Zioles) ở Sea này" end
+
+        local okPv, cf = pcall(function() return npc:GetPivot() end)
+        if not okPv or not cf then return "fail", "Không lấy được vị trí NPC" end
+
+        local beliBefore, snapBefore = getBeli(), snapshotFruitTools()
+        local result, detail = "fail", "Không mở được Gacha Box"
+
+        _G.FruitPickupBusy = true  -- tạm dừng các vòng farm khác trong lúc đi mua
+        local okRun, err = pcall(function()
+            setStatus("Đang bay tới Zioles...")
+            stopAllFlying()
+            flyTo(cf * CFrame.new(0, 0, 6), flySpeed, function() return autoRandomFruitEnabled end)
+            task.wait(0.3)
+
+            -- Mở hội thoại NPC (ProximityPrompt / ClickDetector nếu có)
+            for _, d in ipairs(npc:GetDescendants()) do
+                if d:IsA("ProximityPrompt") and typeof(fireproximityprompt) == "function" then
+                    pcall(fireproximityprompt, d)
+                elseif d:IsA("ClickDetector") and typeof(fireclickdetector) == "function" then
+                    pcall(fireclickdetector, d)
+                end
+            end
+
+            local deadline = tick() + 12
+            local clickedPurchase = false
+            while tick() < deadline and autoRandomFruitEnabled do
+                -- Nút mua trong cửa sổ Gacha Box
+                local buy = findButton(function(b)
+                    return string.lower(b.Name) == "purchasebutton"
+                end)
+                if buy then
+                    setStatus("Bấm nút mua trong Gacha Box...")
+                    clickedPurchase = clickButton(buy)
+                    break
+                end
+
+                -- Nút "Random Fruit" trong hội thoại
+                local opt = findButton(function(b)
+                    local t = buttonText(b)
+                    return string.find(t, "random", 1, true) or string.find(t, "gacha", 1, true)
+                        or string.find(t, "ngẫu nhiên", 1, true) or string.find(t, "ngau nhien", 1, true)
+                end)
+                if opt then
+                    setStatus("Chọn Random Fruit trong hội thoại...")
+                    clickButton(opt)
+                end
+                task.wait(0.6)
+            end
+
+            if not clickedPurchase then
+                detail = "Không tìm thấy nút mua (PurchaseButton) sau 12 giây"
+                return
+            end
+
+            local ok, why = waitConfirm(beliBefore, snapBefore, 5)
+            if ok then
+                result, detail = "success", why
+            else
+                result, detail = "unconfirmed", "Đã bấm mua nhưng không thấy trái/Beli đổi (đủ level 50, đủ tiền, đã qua 2 giờ chưa?)"
+            end
+
+            -- Đóng cửa sổ Gacha Box nếu còn mở
+            local close = findButton(function(b)
+                local n = string.lower(b.Name)
+                return n == "close" or n == "closebutton" or n == "x" or buttonText(b):match("^%s*[x×✕]%s*$") ~= nil
+            end)
+            if close then clickButton(close) end
+        end)
+        _G.FruitPickupBusy = false
+        pcall(stopAllFlying)
+
+        if not okRun then return "fail", "Lỗi UI: " .. tostring(err) end
+        return result, detail
+    end
+
+    local function raidBusy()
+        return RAID_FIXED.running or RAID_FIXED.starting or autoRaidEnabled or _G.Dungeon
     end
 
     while task.wait(1) do
@@ -4179,32 +4547,34 @@ task.spawn(function()
             if not wasEnabled then
                 wasEnabled = true
                 nextBuyAt = 0
-                successfulPurchase = false
-                flog("Auto Random Fruit: BẬT - thử remote ngay")
+                setStatus("BẬT - chuẩn bị mua...")
             end
 
-            if tick() >= nextBuyAt then
-                local ok, reason = remoteBuyRandomFruit()
+            if tick() >= nextBuyAt and not raidBusy() then
+                local status, why = tryRemote()
+                if status == "fail" or status == "unconfirmed" then
+                    -- Remote không có tác dụng -> thử cách giao diện
+                    local s2, why2 = tryUI()
+                    if s2 == "success" then status, why = "success", why2
+                    elseif s2 == "unconfirmed" then status, why = "unconfirmed", why2
+                    else status, why = status, tostring(why) .. " | UI: " .. tostring(why2) end
+                end
 
-                if ok then
-                    successfulPurchase = true
+                if status == "success" then
                     nextBuyAt = tick() + RF_COOLDOWN
-                    flog("🎉 Random Fruit thành công:", reason)
-                    flog("Lần thử tiếp theo sau khoảng 2 giờ.")
+                    setStatus("✅ Mua thành công (" .. tostring(why) .. "). Lần sau sau ~2 giờ")
+                elseif status == "unconfirmed" then
+                    nextBuyAt = tick() + RF_RETRY_UNCONFIRMED
+                    setStatus("⚠️ Chưa xác nhận: " .. tostring(why) .. " - thử lại sau 5 phút")
                 else
-                    successfulPurchase = false
                     nextBuyAt = tick() + RF_RETRY
-                    flog("❌ Chưa mua được:", reason)
-                    flog("Sẽ thử lại sau", RF_RETRY, "giây; KHÔNG bay tới NPC.")
+                    setStatus("❌ Thất bại: " .. tostring(why) .. " - thử lại sau " .. RF_RETRY .. "s")
                 end
             end
         else
-            if wasEnabled then
-                flog("Auto Random Fruit: TẮT")
-            end
-
+            if wasEnabled then setStatus("Đang tắt") end
             wasEnabled = false
-            successfulPurchase = false
+            _G.RandomFruitStatus = "Đang tắt"
         end
     end
 end)
@@ -4227,6 +4597,8 @@ task.spawn(function()
                     local hrp  = char and char:FindFirstChild("HumanoidRootPart")
                     local hum  = char and char:FindFirstChildOfClass("Humanoid")
                     if not hrp or not hum or hum.Health <= 0 then return end
+
+                    if _G.FruitPickupBusy then return end -- nhường cho Auto Pickup Fruit
 
                     -- tìm rương còn dùng được, gần nhất
                     local bestChest, bestDist, bestPos
@@ -4268,6 +4640,536 @@ task.spawn(function()
     end
 end)
 
+-- LOGIC AUTO PICKUP FRUIT (NHẶT TRÁI ÁC QUỶ RƠI TRÊN MAP)
+-- Trái spawn ngoài map là Tool nằm trực tiếp trong workspace (tên chứa "Fruit", có Handle).
+-- Server chỉ cho nhặt khi nhân vật chạm vào Handle -> bay tới rồi đứng lên trái.
+-- Khi đang nhặt, _G.FruitPickupBusy = true để Auto Farm / Material / Chest tạm dừng, nhặt xong tự chạy lại.
+task.spawn(function()
+    local attempts  = setmetatable({}, {__mode = "k"})  -- số lần thử mỗi trái
+    local blacklist = setmetatable({}, {__mode = "k"})  -- trái không nhặt được: bỏ qua tạm thời
+
+    local function fruitLog(...)
+        if _G.FruitPickupDebug then
+            print("[FruitPickup]", ...)
+        end
+    end
+
+    local function getRoot()
+        local c = LocalPlayer.Character
+        return c and c:FindFirstChild("HumanoidRootPart")
+    end
+
+    -- Đã cầm trái cùng tên (game không cho cầm trùng 1 loại) -> khỏi bay tới nhặt vô ích
+    local function alreadyHolding(name)
+        local bp = LocalPlayer:FindFirstChild("Backpack")
+        local ch = LocalPlayer.Character
+        return (bp ~= nil and bp:FindFirstChild(name) ~= nil)
+            or (ch ~= nil and ch:FindFirstChild(name) ~= nil)
+    end
+
+    -- Trái gần nhất còn nhặt được
+    local function findNearestFruit(hrp)
+        local bestObj, bestHandle, bestDist
+        local maxDist = tonumber(_G.FruitPickupMaxDistance) or math.huge
+
+        for _, obj in ipairs(workspace:GetChildren()) do
+            if (obj:IsA("Tool") or obj:IsA("Model"))
+                and string.find(string.lower(obj.Name), "fruit", 1, true)
+                and not Players:GetPlayerFromCharacter(obj) then
+
+                local ban = blacklist[obj]
+                if not (ban and tick() < ban) and not alreadyHolding(obj.Name) then
+                    local handle = obj:FindFirstChild("Handle")
+                    if handle and handle:IsA("BasePart") then
+                        local d = (handle.Position - hrp.Position).Magnitude
+                        if d <= maxDist and (not bestDist or d < bestDist) then
+                            bestObj, bestHandle, bestDist = obj, handle, d
+                        end
+                    end
+                end
+            end
+        end
+        return bestObj, bestHandle
+    end
+
+    local function pickupFruit(fruit, handle)
+        local function stillWanted()
+            return _G.AutoPickupFruit and fruit.Parent == workspace and handle.Parent ~= nil
+        end
+
+        stopAllFlying()
+        flyTo(CFrame.new(handle.Position + Vector3.new(0, 3, 0)), flySpeed, stillWanted)
+        if not stillWanted() then return fruit.Parent ~= workspace end
+
+        -- Đứng đè lên Handle tới khi trái biến mất khỏi workspace (= đã vào Backpack)
+        local t0 = tick()
+        while stillWanted() and tick() - t0 < 2 do
+            local root = getRoot()
+            if not root then break end
+            root.CFrame = CFrame.new(handle.Position)
+            root.AssemblyLinearVelocity  = Vector3.zero
+            root.AssemblyAngularVelocity = Vector3.zero
+
+            -- Dự phòng cho executor có hỗ trợ firetouchinterest
+            if typeof(firetouchinterest) == "function" then
+                pcall(function()
+                    firetouchinterest(root, handle, 0)
+                    firetouchinterest(root, handle, 1)
+                end)
+            end
+            task.wait(0.1)
+        end
+        return fruit.Parent ~= workspace
+    end
+
+    while task.wait(0.5) do
+        if _G.AutoPickupFruit then
+            -- Không giành quyền điều khiển nhân vật khi đang Raid / mua chip
+            local raidBusy = autoRaidEnabled or _G.Dungeon or autoStartRaidEnabled or _G.StartRaid
+                or autoBuyChipEnabled or _G.AutoBuyChip
+                or RAID_FIXED.running or RAID_FIXED.starting
+
+            if not raidBusy then
+                local char = LocalPlayer.Character
+                local hrp  = char and char:FindFirstChild("HumanoidRootPart")
+                local hum  = char and char:FindFirstChildOfClass("Humanoid")
+
+                if hrp and hum and hum.Health > 0 then
+                    local fruit, handle = findNearestFruit(hrp)
+                    if fruit then
+                        _G.FruitPickupBusy = true
+                        fruitLog("Thấy trái:", fruit.Name)
+
+                        local okCall, picked = pcall(pickupFruit, fruit, handle)
+                        _G.FruitPickupBusy = false -- luôn nhả cờ, kể cả khi lỗi
+
+                        -- Noclip tắt: trả lại va chạm cho nhân vật
+                        pcall(function()
+                            local c = LocalPlayer.Character
+                            if c then
+                                for _, part in ipairs(c:GetChildren()) do
+                                    if part:IsA("BasePart") then part.CanCollide = true end
+                                end
+                            end
+                        end)
+
+                        if okCall and picked then
+                            attempts[fruit] = nil
+                            fruitLog("✅ Đã nhặt:", fruit.Name)
+                        elseif _G.AutoPickupFruit then
+                            -- Chưa nhặt được sau 3 lần -> bỏ qua trái này 60 giây
+                            attempts[fruit] = (attempts[fruit] or 0) + 1
+                            if attempts[fruit] >= 3 then
+                                blacklist[fruit] = tick() + 60
+                                attempts[fruit] = nil
+                                fruitLog("⚠️ Bỏ qua tạm thời:", fruit.Name)
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+end)
+
+
+-- =========================================================
+--   TAB ESP: PLAYER / TRÁI ÁC QUỶ / ĐẢO (SEA 1-2-3) / BERRY
+-- =========================================================
+-- Vẽ nhãn 2D bằng WorldToViewportPoint nên hiện được cả đảo ở rất xa, không phụ thuộc streaming.
+-- Bọc trong hàm riêng (IIFE): chunk chính đã sát giới hạn 200 local, hàm mới có bộ đếm local riêng.
+;(function()
+    local CollectionService = game:GetService("CollectionService")
+    local Camera = workspace.CurrentCamera
+
+    _G.ESP_Player    = false
+    _G.ESP_Fruit     = false
+    _G.ESP_Island    = false
+    _G.ESP_Berry     = false
+    _G.ESP_Highlight = true   -- viền màu (Highlight) cho Player & Trái
+    _G.ESP_MaxDist   = math.huge
+
+    -- Đảo theo từng Sea. Toạ độ ghi theo trí nhớ -> chỉ mang tính tương đối (đủ để định hướng).
+    -- Nếu trong workspace._WorldOrigin.Locations có đảo cùng tên thì script dùng vị trí thật đó.
+    local ESP_ISLANDS = {
+        [1] = {
+            {"Windmill",         Vector3.new(979.8, 16.5, 1429.0)},
+            {"Marine Starter",   Vector3.new(-2566.4, 6.9, 2045.3)},
+            {"Middle Town",      Vector3.new(-690.3, 15.1, 1582.2)},
+            {"Jungle",           Vector3.new(-1612.8, 37.0, 149.1)},
+            {"Pirate Village",   Vector3.new(-1181.3, 4.8, 3803.5)},
+            {"Desert",           Vector3.new(944.2, 20.9, 4373.3)},
+            {"Snow Island",      Vector3.new(1347.8, 104.7, -1319.7)},
+            {"MarineFord",       Vector3.new(-4914.8, 51.0, 4281.0)},
+            {"Colosseum",        Vector3.new(-1427.6, 7.3, -2792.8)},
+            {"Sky Island 1",     Vector3.new(-4869.1, 733.5, -2667.0)},
+            {"Sky Island 2",     Vector3.new(-4607.8, 872.5, -1667.6)},
+            {"Sky Island 3",     Vector3.new(-7894.6, 5547.1, -380.3)},
+            {"Prison",           Vector3.new(4875.3, 5.7, 734.9)},
+            {"Magma Village",    Vector3.new(-5247.7, 12.9, 8505.0)},
+            {"Underwater City",  Vector3.new(61163.9, 11.7, 1819.8)},
+            {"Fountain City",    Vector3.new(5127.1, 59.5, 4105.4)},
+        },
+        [2] = {
+            {"Cafe",             Vector3.new(-379.6, 73.0, 297.4)},
+            {"Factory",          Vector3.new(295.0, 73.0, -56.0)},
+            {"Green Zone",       Vector3.new(-2448.5, 73.0, -3210.6)},
+            {"Graveyard",        Vector3.new(-5622.0, 492.2, -778.9)},
+            {"Snow Mountain",    Vector3.new(753.1, 408.2, -5274.6)},
+            {"Hot and Cold",     Vector3.new(-6127.6, 15.9, -5040.3)},
+            {"Cursed Ship",      Vector3.new(923.2, 125.1, 32885.9)},
+            {"Ice Castle",       Vector3.new(6148.4, 294.4, -6741.1)},
+            {"Forgotten Island", Vector3.new(-3032.2, 317.9, -10075.4)},
+            {"Usoap Island",     Vector3.new(4816.3, 8.5, 2863.2)},
+            {"Mansion",          Vector3.new(2286.0, 15.0, 863.0)},
+            {"Raid Room",        Vector3.new(-6438.7, 250.6, -4501.5)},
+        },
+        [3] = {
+            {"Port Town",        Vector3.new(-290.0, 43.0, 5583.0)},
+            {"Hydra Island",     Vector3.new(5228.9, 603.9, 345.0)},
+            {"Great Tree",       Vector3.new(2681.3, 1682.8, -7190.0)},
+            {"Floating Turtle",  Vector3.new(-13274.5, 531.8, -7579.2)},
+            {"Deep Forest",      Vector3.new(-10919.3, 331.8, -8637.6)},
+            {"Haunted Castle",   HAUNTED_CASTLE_POS},
+            {"Castle on the Sea",Vector3.new(-5017.4, 314.8, -2823.0)},
+            {"Cake Island",      CAKE_ISLAND_POS},
+            {"Peanut Island",    Vector3.new(-2062.7, 50.5, -10232.6)},
+            {"Ice Cream Island", Vector3.new(-902.6, 79.9, -10988.8)},
+            {"Tiki Outpost",     Vector3.new(-16269.7, 25.2, 1373.7)},
+            {"Submerged Island", SUBMERGED_CENTER},
+        },
+    }
+
+    -- Đảo xuất hiện theo sự kiện (Sea 3): đọc trực tiếp từ workspace, có thì mới hiện
+    local DYNAMIC_ISLANDS = {
+        {"Mirage Island",     {"MysticIsland", "Mirage Island"}},
+        {"Prehistoric Island",{"PrehistoricIsland", "Prehistoric Island"}},
+        {"Kitsune Island",    {"KitsuneIsland", "Kitsune Island"}},
+    }
+
+    local seaIdx = World1 and 1 or (World2 and 2 or 3)
+
+    -- ===== UI overlay riêng =====
+    local espGui = Instance.new("ScreenGui")
+    espGui.Name = "MinhHubESP"
+    espGui.ResetOnSpawn = false
+    espGui.IgnoreGuiInset = true
+    espGui.DisplayOrder = 999990 -- thấp hơn menu chính để menu luôn nằm trên
+    espGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+    pcall(function()
+        if syn and type(syn) == "table" and syn.protect_gui then syn.protect_gui(espGui) end
+    end)
+    pcall(function()
+        local old = uiContainer:FindFirstChild("MinhHubESP")
+        if old then old:Destroy() end
+    end)
+    espGui.Parent = uiContainer
+
+    local hlFolder = Instance.new("Folder")
+    hlFolder.Name = "MinhHubESP_Highlights"
+    hlFolder.Parent = uiContainer
+
+    local COLORS = {
+        Pirates = Color3.fromRGB(255, 80, 80),
+        Marines = Color3.fromRGB(80, 150, 255),
+        Player  = Color3.fromRGB(255, 255, 255),
+        Fruit   = Color3.fromRGB(255, 120, 255),
+        Island  = Color3.fromRGB(90, 230, 255),
+        Event   = Color3.fromRGB(255, 200, 60),
+        Berry   = Color3.fromRGB(120, 255, 120),
+    }
+
+    -- entries[kind][key] = {label=TextLabel, hl=Highlight|nil, getPos=fn, text=string, color=Color3}
+    local entries = { Player = {}, Fruit = {}, Island = {}, Berry = {} }
+    local counts  = { Player = 0, Fruit = 0, Island = 0, Berry = 0 }
+
+    local function makeLabel(color)
+        local l = Instance.new("TextLabel")
+        l.AnchorPoint = Vector2.new(0.5, 1)
+        l.AutomaticSize = Enum.AutomaticSize.XY
+        l.Size = UDim2.new(0, 0, 0, 0)
+        l.BackgroundTransparency = 1
+        l.Font = Enum.Font.GothamBold
+        l.TextSize = 13
+        l.TextColor3 = color
+        l.TextStrokeTransparency = 0.25
+        l.TextStrokeColor3 = Color3.new(0, 0, 0)
+        l.Visible = false
+        l.Parent = espGui
+        return l
+    end
+
+    local function removeEntry(kind, key)
+        local e = entries[kind][key]
+        if not e then return end
+        if e.label then e.label:Destroy() end
+        if e.hl then e.hl:Destroy() end
+        entries[kind][key] = nil
+    end
+
+    local function clearKind(kind)
+        for key in pairs(entries[kind]) do removeEntry(kind, key) end
+        counts[kind] = 0
+    end
+
+    -- Tạo / cập nhật 1 mục ESP
+    local function upsert(kind, key, getPos, text, color, adorneeForHL)
+        local e = entries[kind][key]
+        if not e then
+            e = { label = makeLabel(color), getPos = getPos }
+            entries[kind][key] = e
+        end
+        e.getPos = getPos
+        e.text   = text
+        e.color  = color
+        e.label.TextColor3 = color
+
+        local wantHL = _G.ESP_Highlight and adorneeForHL ~= nil
+        if wantHL and not e.hl then
+            local hl = Instance.new("Highlight")
+            hl.FillTransparency = 0.75
+            hl.OutlineTransparency = 0
+            hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+            hl.Parent = hlFolder
+            e.hl = hl
+        elseif not wantHL and e.hl then
+            e.hl:Destroy(); e.hl = nil
+        end
+        if e.hl then
+            e.hl.Adornee = adorneeForHL
+            e.hl.FillColor = color
+            e.hl.OutlineColor = color
+        end
+    end
+
+    local function myPos()
+        local c = LocalPlayer.Character
+        local r = c and c:FindFirstChild("HumanoidRootPart")
+        return r and r.Position
+    end
+
+    -- ===== Thu thập dữ liệu (chạy mỗi 0.5s, không chạy mỗi frame) =====
+    local function collectPlayers()
+        local seen = {}
+        for _, plr in ipairs(Players:GetPlayers()) do
+            if plr ~= LocalPlayer then
+                local char = plr.Character
+                local head = char and (char:FindFirstChild("Head") or char:FindFirstChild("HumanoidRootPart"))
+                local hum  = char and char:FindFirstChildOfClass("Humanoid")
+                if head and hum and hum.Health > 0 then
+                    seen[plr] = true
+                    local lvl = ""
+                    pcall(function()
+                        local d = plr:FindFirstChild("Data")
+                        if d and d:FindFirstChild("Level") then lvl = " [Lv." .. tostring(d.Level.Value) .. "]" end
+                    end)
+                    local color = COLORS.Player
+                    pcall(function()
+                        if plr.Team and COLORS[plr.Team.Name] then color = COLORS[plr.Team.Name] end
+                    end)
+                    local hp = math.floor(hum.Health / math.max(hum.MaxHealth, 1) * 100)
+                    upsert("Player", plr,
+                        function() return head.Position + Vector3.new(0, 2.5, 0) end,
+                        plr.DisplayName .. lvl .. "  " .. hp .. "% HP", color, char)
+                end
+            end
+        end
+        for plr in pairs(entries.Player) do
+            if not seen[plr] then removeEntry("Player", plr) end
+        end
+    end
+
+    local function collectFruits()
+        local seen = {}
+        for _, obj in ipairs(workspace:GetChildren()) do
+            if (obj:IsA("Tool") or obj:IsA("Model"))
+                and string.find(string.lower(obj.Name), "fruit", 1, true)
+                and not Players:GetPlayerFromCharacter(obj) then
+                local handle = obj:FindFirstChild("Handle")
+                if handle and handle:IsA("BasePart") then
+                    seen[obj] = true
+                    upsert("Fruit", obj,
+                        function() return handle.Position + Vector3.new(0, 3, 0) end,
+                        "🍎 " .. obj.Name, COLORS.Fruit, obj)
+                end
+            end
+        end
+        for obj in pairs(entries.Fruit) do
+            if not seen[obj] or not obj.Parent then removeEntry("Fruit", obj) end
+        end
+    end
+
+    local function collectIslands()
+        local seen = {}
+        local locations = workspace:FindFirstChild("_WorldOrigin")
+            and workspace._WorldOrigin:FindFirstChild("Locations")
+
+        for _, info in ipairs(ESP_ISLANDS[seaIdx] or {}) do
+            local name, pos = info[1], info[2]
+            -- ưu tiên vị trí thật nếu có đảo cùng tên trong Locations
+            local live = locations and locations:FindFirstChild(name)
+            if live then
+                local okPv, cf = pcall(function() return live:GetPivot() end)
+                if okPv and cf then pos = cf.Position end
+            end
+            seen[name] = true
+            upsert("Island", name, function() return pos + Vector3.new(0, 40, 0) end,
+                "🏝 " .. name, COLORS.Island, nil)
+        end
+
+        -- đảo sự kiện (chỉ hiện khi đang tồn tại)
+        for _, info in ipairs(DYNAMIC_ISLANDS) do
+            local label, names = info[1], info[2]
+            local found
+            for _, nm in ipairs(names) do
+                found = (locations and locations:FindFirstChild(nm))
+                    or (workspace:FindFirstChild("Map") and workspace.Map:FindFirstChild(nm))
+                if found then break end
+            end
+            if found then
+                seen[label] = true
+                upsert("Island", label, function()
+                    local okPv, cf = pcall(function() return found:GetPivot() end)
+                    return (okPv and cf and cf.Position or Vector3.zero) + Vector3.new(0, 80, 0)
+                end, "⭐ " .. label, COLORS.Event, nil)
+            end
+        end
+
+        for name in pairs(entries.Island) do
+            if not seen[name] then removeEntry("Island", name) end
+        end
+    end
+
+    local function collectBerries()
+        local seen = {}
+        for _, bush in ipairs(CollectionService:GetTagged("BerryBush")) do
+            if bush.Parent then
+                -- thuộc tính khác rỗng = trên bụi đang có Berry (giá trị là tên Berry)
+                local names = {}
+                for _, v in pairs(bush:GetAttributes()) do
+                    if type(v) == "string" and v ~= "" then names[#names + 1] = v end
+                end
+                if #names > 0 then
+                    seen[bush] = true
+                    upsert("Berry", bush, function()
+                        local okPv, cf = pcall(function() return bush:GetPivot() end)
+                        return (okPv and cf and cf.Position or Vector3.zero) + Vector3.new(0, 4, 0)
+                    end, "🍓 " .. table.concat(names, ", "), COLORS.Berry, nil)
+                end
+            end
+        end
+        for bush in pairs(entries.Berry) do
+            if not seen[bush] or not bush.Parent then removeEntry("Berry", bush) end
+        end
+    end
+
+    local collectors = {
+        { "Player", "ESP_Player", collectPlayers },
+        { "Fruit",  "ESP_Fruit",  collectFruits  },
+        { "Island", "ESP_Island", collectIslands },
+        { "Berry",  "ESP_Berry",  collectBerries },
+    }
+
+    task.spawn(function()
+        while task.wait(0.5) do
+            for _, c in ipairs(collectors) do
+                local kind, flag, fn = c[1], c[2], c[3]
+                if _G[flag] then
+                    pcall(fn)
+                elseif next(entries[kind]) then
+                    clearKind(kind) -- tắt ESP: xoá sạch nhãn & viền
+                end
+                local n = 0
+                for _ in pairs(entries[kind]) do n = n + 1 end
+                counts[kind] = n
+            end
+        end
+    end)
+
+    -- ===== Vẽ nhãn mỗi frame =====
+    RunService.RenderStepped:Connect(function()
+        Camera = workspace.CurrentCamera or Camera
+        if not Camera then return end
+        local me = myPos()
+        local maxD = tonumber(_G.ESP_MaxDist) or math.huge
+
+        for _, bucket in pairs(entries) do
+            for _, e in pairs(bucket) do
+                local okPos, pos = pcall(e.getPos)
+                if okPos and pos then
+                    local screen, onScreen = Camera:WorldToViewportPoint(pos)
+                    local dist = me and (pos - me).Magnitude or (pos - Camera.CFrame.Position).Magnitude
+                    if onScreen and screen.Z > 0 and dist <= maxD then
+                        e.label.Position = UDim2.fromOffset(screen.X, screen.Y)
+                        e.label.Text = string.format("%s\n[%d m]", e.text, math.floor(dist))
+                        e.label.Visible = true
+                    else
+                        e.label.Visible = false
+                    end
+                else
+                    e.label.Visible = false
+                end
+            end
+        end
+    end)
+
+    -- ===== TAB ESP trong menu =====
+    local espPage = createTab("ESP", "👁️", false)
+    -- đưa tab ESP lên trước tab Config trong sidebar
+    pcall(function()
+        tabs["ESP"].Button.LayoutOrder = 1
+        if tabs["Config"] then tabs["Config"].Button.LayoutOrder = 2 end
+    end)
+
+    createToggleFeature(espPage, "ESPPlayerToggle", "ESP Player", "Hiện tên, level, % máu, khoảng cách của người chơi khác (đỏ: Pirates, xanh: Marines)", 1, _G.ESP_Player, function(state)
+        _G.ESP_Player = state
+    end)
+    createToggleFeature(espPage, "ESPFruitToggle", "ESP Trái Ác Quỷ", "Hiện tên & khoảng cách Trái Ác Quỷ đang rơi trên map", 2, _G.ESP_Fruit, function(state)
+        _G.ESP_Fruit = state
+    end)
+    createToggleFeature(espPage, "ESPIslandToggle", "ESP Đảo (Sea " .. seaIdx .. ")", "Hiện tên & khoảng cách các đảo của Sea hiện tại (kèm đảo sự kiện nếu có)", 3, _G.ESP_Island, function(state)
+        _G.ESP_Island = state
+    end)
+    createToggleFeature(espPage, "ESPBerryToggle", "ESP Berry", "Hiện bụi Berry đang có quả cùng tên Berry & khoảng cách", 4, _G.ESP_Berry, function(state)
+        _G.ESP_Berry = state
+    end)
+    createToggleFeature(espPage, "ESPHighlightToggle", "Viền màu (Highlight)", "Viền sáng xuyên tường cho Player & Trái (tắt nếu thấy giật)", 5, _G.ESP_Highlight, function(state)
+        _G.ESP_Highlight = state
+        for _, kind in ipairs({"Player", "Fruit"}) do
+            for _, e in pairs(entries[kind]) do
+                if not state and e.hl then e.hl:Destroy(); e.hl = nil end
+            end
+        end
+    end)
+
+    -- Thẻ thống kê số lượng đang hiển thị
+    local statCard = Instance.new("Frame")
+    statCard.Size = UDim2.new(1, 0, 0, 34)
+    statCard.BackgroundColor3 = BANANA_CARD
+    statCard.LayoutOrder = 6
+    statCard.Parent = espPage
+    addCorner(statCard, 8)
+    addStroke(statCard, BANANA_CARD_BORDER, 1)
+
+    local statText = Instance.new("TextLabel")
+    statText.Size = UDim2.new(1, -24, 1, 0)
+    statText.Position = UDim2.new(0, 12, 0, 0)
+    statText.BackgroundTransparency = 1
+    statText.TextColor3 = Color3.fromRGB(190, 190, 200)
+    statText.TextSize = 11
+    statText.Font = Enum.Font.Gotham
+    statText.TextXAlignment = Enum.TextXAlignment.Left
+    statText.Parent = statCard
+
+    task.spawn(function()
+        while statText.Parent do
+            statText.Text = string.format("👁 Player: %d  |  Trái: %d  |  Đảo: %d  |  Berry: %d",
+                counts.Player, counts.Fruit, counts.Island, counts.Berry)
+            task.wait(0.5)
+        end
+    end)
+end)()
+
 -- LOGIC AUTO RANDOM BONES & STORE FRUIT
 task.spawn(function()
     while task.wait(2) do
@@ -4282,50 +5184,164 @@ task.spawn(function()
     end
 end)
 
+-- LOGIC AUTO STORE FRUIT v2
+-- Sửa lỗi: server nhận tên "gốc" của trái (thuộc tính OriginalName) chứ không phải Tool.Name, nên bản cũ gọi
+-- StoreFruit bằng tên sai và không bao giờ cất được. Giờ thử lần lượt các tên có thể, kiểm tra trái đã biến mất
+-- khỏi người chơi chưa; nếu remote vẫn không được thì làm như ảnh hướng dẫn: cầm trái -> bấm "Store" trong hộp thoại.
+_G.StoreFruitStatus = "Đang tắt"
 task.spawn(function()
-    while task.wait(1) do
-        local commF = ReplicatedStorage:FindFirstChild("Remotes") and ReplicatedStorage.Remotes:FindFirstChild("CommF_")
+    local failCount = setmetatable({}, {__mode = "k"})  -- số vòng thất bại mỗi Tool
+    local skipUntil = setmetatable({}, {__mode = "k"})  -- bỏ qua tạm thời Tool không cất được
 
+    local function setStatus(t)
+        if _G.StoreFruitStatus ~= t then
+            _G.StoreFruitStatus = t
+            print("[StoreFruit]", t)
+        end
+    end
+
+    local function stillOwned(tool)
+        local char = LocalPlayer.Character
+        local bp = LocalPlayer:FindFirstChild("Backpack")
+        return tool.Parent ~= nil and ((bp and tool:IsDescendantOf(bp)) or (char and tool:IsDescendantOf(char)))
+    end
+
+    local function guiVisible(obj, pg)
+        local g = obj
+        while g and g ~= pg do
+            if g:IsA("GuiObject") and not g.Visible then return false end
+            if g:IsA("ScreenGui") and not g.Enabled then return false end
+            g = g.Parent
+        end
+        return true
+    end
+
+    -- Cách dự phòng: cầm trái, click để hiện hộp thoại Eat/Drop/Store/Nevermind rồi bấm đúng nút "Store"
+    local function storeViaDialog(tool)
+        local char = LocalPlayer.Character
+        local hum = char and char:FindFirstChildOfClass("Humanoid")
+        local pg = LocalPlayer:FindFirstChild("PlayerGui")
+        if not hum or not pg then return false end
+
+        pcall(function() hum:EquipTool(tool) end)
+        task.wait(0.35)
+        pcall(function() tool:Activate() end)
+
+        local deadline = tick() + 3
+        while tick() < deadline and stillOwned(tool) do
+            local storeBtn
+            for _, d in ipairs(pg:GetDescendants()) do
+                if (d:IsA("TextButton") or d:IsA("ImageButton")) and guiVisible(d, pg) then
+                    local t = ""
+                    pcall(function()
+                        if d:IsA("TextButton") then t = d.Text end
+                        for _, c in ipairs(d:GetDescendants()) do
+                            if c:IsA("TextLabel") or c:IsA("TextButton") then t = t .. " " .. c.Text end
+                        end
+                    end)
+                    if string.lower(t):match("^%s*store%s*$") then storeBtn = d; break end
+                end
+            end
+
+            if storeBtn then
+                pcall(function()
+                    local vim = game:GetService("VirtualInputManager")
+                    local inset = game:GetService("GuiService"):GetGuiInset()
+                    local pos = storeBtn.AbsolutePosition + storeBtn.AbsoluteSize / 2
+                    vim:SendMouseButtonEvent(pos.X, pos.Y + inset.Y, 0, true, game, 0)
+                    task.wait(0.05)
+                    vim:SendMouseButtonEvent(pos.X, pos.Y + inset.Y, 0, false, game, 0)
+                end)
+                task.wait(0.6)
+                break
+            end
+            task.wait(0.3)
+        end
+        return not stillOwned(tool)
+    end
+
+    local function storeTool(commF, tool)
+        local until_ = skipUntil[tool]
+        if until_ and tick() < until_ then return end
+
+        local char = LocalPlayer.Character
+        local hum = char and char:FindFirstChildOfClass("Humanoid")
+
+        -- Bỏ trái đang cầm về Backpack trước
+        if char and tool.Parent == char and hum then
+            pcall(function() hum:UnequipTools() end)
+            task.wait(0.2)
+        end
+
+        -- Các tên khả dĩ mà server chấp nhận (không trùng nhau)
+        local candidates, seen = {}, {}
+        local function add(n)
+            if type(n) == "string" and n ~= "" and not seen[n] then
+                seen[n] = true
+                candidates[#candidates + 1] = n
+            end
+        end
+        add(tool:GetAttribute("OriginalName"))
+        add(tool:GetAttribute("FruitName"))
+        add(tool.Name)
+        add((string.gsub(tool.Name, " Fruit$", "")))
+
+        local lastResult = nil
+        for _, nm in ipairs(candidates) do
+            local ok, res = pcall(function() return commF:InvokeServer("StoreFruit", nm, tool) end)
+            lastResult = ok and res or ("lỗi: " .. tostring(res))
+            task.wait(0.4)
+            if not stillOwned(tool) then
+                setStatus("✅ Đã cất: " .. tool.Name .. " (tên gửi: " .. nm .. ")")
+                failCount[tool] = nil
+                return
+            end
+        end
+
+        failCount[tool] = (failCount[tool] or 0) + 1
+        local reason = (type(lastResult) == "string" and lastResult) or (lastResult ~= nil and tostring(lastResult)) or "không rõ"
+        setStatus("⚠️ Remote không cất được " .. tool.Name .. " (server trả: " .. reason .. ")")
+
+        -- Remote thất bại 2 vòng liên tiếp -> dùng hộp thoại Store
+        if failCount[tool] >= 2 then
+            if storeViaDialog(tool) then
+                setStatus("✅ Đã cất bằng hộp thoại: " .. tool.Name)
+                failCount[tool] = nil
+            elseif failCount[tool] >= 4 then
+                skipUntil[tool] = tick() + 60
+                failCount[tool] = nil
+                setStatus("❌ Không cất được " .. tool.Name .. " - kho đầy? Bỏ qua 60 giây")
+            end
+        end
+    end
+
+    while task.wait(1) do
         if autoStoreFruitEnabled then
             pcall(function()
-                if not commF then return end
+                local remotes = ReplicatedStorage:FindFirstChild("Remotes")
+                local commF = remotes and remotes:FindFirstChild("CommF_")
+                if not commF then setStatus("Không thấy Remotes.CommF_"); return end
 
+                -- Không cất trái khi đang bay đi nhặt / đang mua ở NPC
+                if _G.FruitPickupBusy then return end
+
+                local list = {}
                 local backpack = LocalPlayer:FindFirstChild("Backpack")
                 local char = LocalPlayer.Character
+                if backpack then for _, t in ipairs(backpack:GetChildren()) do list[#list + 1] = t end end
+                if char then for _, t in ipairs(char:GetChildren()) do list[#list + 1] = t end end
 
-                local function storeTool(tool)
-                    if tool and tool:IsA("Tool") then
-                        local toolName = tool.Name
-                        local lowerName = string.lower(toolName)
-                        
-                        if string.find(lowerName, "fruit") or tool:FindFirstChild("Fruit") or tool:GetAttribute("Fruit") then
-                            if char and tool.Parent == char then
-                                tool.Parent = backpack
-                                task.wait(0.2)
-                            end
-                            
-                            commF:InvokeServer("StoreFruit", toolName, tool)
-                            
-                            local cleanName = string.gsub(toolName, " Fruit", "")
-                            if cleanName ~= toolName then
-                                commF:InvokeServer("StoreFruit", cleanName, tool)
-                            end
-                        end
+                local found = false
+                for _, tool in ipairs(list) do
+                    if _G.IsFruitTool and _G.IsFruitTool(tool) and tool.Parent then
+                        found = true
+                        storeTool(commF, tool)
                     end
                 end
-
-                if backpack then
-                    for _, tool in pairs(backpack:GetChildren()) do
-                        storeTool(tool)
-                    end
-                end
-
-                if char then
-                    for _, tool in pairs(char:GetChildren()) do
-                        storeTool(tool)
-                    end
-                end
+                if not found then setStatus("Chờ trái ác quỷ trong Backpack...") end
             end)
+        else
+            _G.StoreFruitStatus = "Đang tắt"
         end
     end
 end)
@@ -4371,7 +5387,7 @@ local function isMatchingWeaponType(tool, targetType)
             "fruit", "blox fruit", "rocket", "spin", "chop", "spring", "bomb", "smoke", "spike", "flame", "falcon", 
             "ice", "sand", "dark", "diamond", "light", "rubber", "barrier", "ghost", "magma", "quake", "buddha", 
             "love", "spider", "sound", "phoenix", "portal", "rumble", "pain", "blizzard", "gravity", "mammoth", 
-            "t-rex", "dough", "shadow", "venom", "control", "gas", "spirit", "dragon", "leopard", "kitsune", "yeti"
+            "t-rex", "dough", "shadow", "venom", "control", "gas", "spirit", "dragon", "tiger", "kitsune", "yeti"
         }
         for _, kw in ipairs(fruitKeywords) do
             if string.find(toolName, kw) then return true end
@@ -4986,6 +6002,7 @@ task.spawn(function()
         task.wait(0.05)
         if autoFarmMaterialEnabled then
             pcall(function()
+                if _G.FruitPickupBusy then return end -- đang bay đi nhặt trái ác quỷ
                 -- Không farm được (chưa chọn / material không có ở Sea này) -> chỉ thông báo, không bay lung tung
                 if not MatFarm.getMobSet() then return end
 
@@ -5065,6 +6082,7 @@ task.spawn(function()
         task.wait(0.05)
         if autoFarmEnabled then
             pcall(function()
+                if _G.FruitPickupBusy then return end -- đang bay đi nhặt trái ác quỷ
                 -- Không khóa Auto Farm ở level 2800; nếu level cao hơn, GetQuestData() dùng quest cuối đã khai báo.
 
                 equipSelectedWeapon()

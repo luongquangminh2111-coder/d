@@ -8912,7 +8912,8 @@ RunService.Heartbeat:Connect(function(deltaTime)
     if RAID_FIXED.killAuraActive then return end
     if not bringMobsEnabled or not targetEnemy or type(targetEnemy) ~= "userdata" or not targetEnemy:FindFirstChild("HumanoidRootPart") then return end
     local __now = os.clock()
-    if __now - __bringLast < 0.016 then return end   -- kéo quái ~mỗi frame để đánh liên tục
+    -- Không quét và cập nhật physics quái ở mọi frame: giảm tải khi farm bằng Melee/Sword.
+    if __now - __bringLast < 0.075 then return end
     __bringLast = __now
     if targetEnemy:FindFirstChild("Humanoid") and targetEnemy.Humanoid.Health <= 0 then return end
 
@@ -8989,8 +8990,8 @@ resolveCombatRemotes(true)
 -- Có thể giảm/tăng tùy ping/server.
 -- 0.025 = tối đa khoảng 40 chu kỳ/giây về phía client,
 -- nhưng server vẫn có thể giới hạn tốc độ thực tế.
-local attackInterval = 0.06   -- ~16 lượt/giây: đủ nhanh nhưng không spam remote (0.01 dễ bị server kick). Hạ xuống 0.04 nếu muốn nhanh hơn
-local attackRadius   = 120   -- đo từ vị trí người chơi (đang bay cao trên đầu quái) -> để rộng hơn bản cũ (70)
+local attackInterval = 0.12  -- khoảng 8 lượt/giây; giảm spam remote/giật màn hình khi dùng Melee hoặc Sword
+local attackRadius   = 90    -- giữ tầm đánh hợp lý, giảm lượng mục tiêu phải quét
 local lastAttackTime = 0
 
 -- FIX: số mob đánh cùng lúc lấy từ cài đặt "Fast Attack Targets" (mặc định 2) thay vì hằng số cố định.
@@ -9094,8 +9095,13 @@ local function getAliveAttackTargets(maxTargets)
         if #result >= limit then break end
     end
 
-    for _, p in ipairs(FA.getPlayerTargets(playerPos, FA.maxPlayers)) do
-        result[#result + 1] = p
+    -- Giới hạn tổng số mục tiêu (quái + người chơi). Bản cũ cộng thêm người chơi sau giới hạn
+    -- quái, khiến một lượt có thể gửi hit cho nhiều mục tiêu hơn cấu hình.
+    local remaining = math.max(0, limit - #result)
+    if remaining > 0 then
+        for _, p in ipairs(FA.getPlayerTargets(playerPos, math.min(FA.maxPlayers, remaining))) do
+            result[#result + 1] = p
+        end
     end
     return result
 end
@@ -9252,24 +9258,31 @@ local function performFastAttackV3()
     if #targets == 0 then return end
 
     local tool = char:FindFirstChildOfClass("Tool")
-    -- Trái ác quỷ: M1 ảo qua LeftClickRemote, bỏ qua Activate + click màn hình
+    -- Trái ác quỷ: M1 qua remote riêng; không click chuột.
     local fruitM1 = false
     if tool then
         local aim = targets[1] and targets[1].hrp and targets[1].hrp.Position
         fruitM1 = FA.fruitM1(tool, hrp, aim)
     end
-    -- Súng: M1 ảo qua remote bắn, không Activate / không click màn hình
+
+    -- Súng: thử remote bắn riêng; không kết hợp thêm click ảo dư thừa.
     local gunM1 = false
     if tool and not fruitM1 then
         gunM1 = FA.gunM1(tool, hrp, targets)
     end
-    if tool and not fruitM1 and not gunM1 then
-        pcall(function()
-            tool:Activate()
-        end)
+
+    local hasCombatRemote = (RegisterHit ~= nil) or (THit ~= nil)
+    -- Khi RegisterHit/THit có sẵn, dùng một luồng đánh qua remote. Tránh gọi Activate +
+    -- VirtualUser đồng thời vì dễ tạo input/animation trùng và làm giật màn hình.
+    if tool and not fruitM1 and not gunM1 and not hasCombatRemote
+        and os.clock() - (FA._toolActivateAt or 0) >= 0.16 then
+        FA._toolActivateAt = os.clock()
+        pcall(function() tool:Activate() end)
     end
 
-    if not fruitM1 and not gunM1 and okVU and VirtualUser and os.clock() - (FA._vuAt or 0) > 0.05 then
+    -- Chỉ dùng click ảo làm phương án dự phòng khi KHÔNG có tool và combat remote.
+    if not tool and not fruitM1 and not gunM1 and not hasCombatRemote
+        and okVU and VirtualUser and os.clock() - (FA._vuAt or 0) > 0.18 then
         FA._vuAt = os.clock()
         pcall(function()
             VirtualUser:CaptureController()
@@ -9277,45 +9290,33 @@ local function performFastAttackV3()
         end)
     end
 
-    -- Gói chuẩn: hit chính + danh sách {model, part} của TẤT CẢ mục tiêu (quái + người).
-    -- Mỗi mục tiêu phụ có thêm 1 cặp RegisterAttack + RegisterHit riêng để server chắc chắn nhận sát thương.
-    local pairList = {}
+    -- Gửi một gói RegisterHit cho cả danh sách mục tiêu; không lặp RegisterHit/THit
+    -- nhiều lần trong cùng một lượt tấn công.
+    local validTargets, pairList = {}, {}
     for i = 1, #targets do
-        pairList[i] = { targets[i].model, targets[i].hrp }
+        local t = targets[i]
+        if t and t.model and t.model.Parent and t.hrp and t.hrp.Parent then
+            validTargets[#validTargets + 1] = t
+            pairList[#pairList + 1] = { t.model, t.hrp }
+        end
     end
+    if #validTargets == 0 then return end
 
     if RegisterHit then
         if RegisterAttack then
             pcall(function() RegisterAttack:FireServer(0) end)
         end
         pcall(function()
-            RegisterHit:FireServer(targets[1].hrp, pairList)
+            RegisterHit:FireServer(validTargets[1].hrp, pairList)
         end)
-
-        for i = 2, math.min(#targets, 8) do
-            local t = targets[i]
-            if t.hrp and t.hrp.Parent then
-                if RegisterAttack then
-                    pcall(function() RegisterAttack:FireServer(0) end)
-                end
-                pcall(function()
-                    RegisterHit:FireServer(t.hrp, { { t.model, t.hrp } })
-                end)
-            end
+    elseif THit then
+        -- Remote tương thích cũ chỉ dùng khi không có RegisterHit.
+        for i = 1, math.min(#validTargets, getAttackLimit()) do
+            local t = validTargets[i]
+            pcall(function() THit:FireServer(t.hrp) end)
         end
     elseif RegisterAttack then
         pcall(function() RegisterAttack:FireServer(0) end)
-    end
-
-    if THit then
-        for i = 1, #targets do
-            local t = targets[i]
-            if t.hrp and t.hrp.Parent then
-                pcall(function()
-                    THit:FireServer(t.hrp)
-                end)
-            end
-        end
     end
 end
 

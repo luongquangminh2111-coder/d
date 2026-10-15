@@ -2892,6 +2892,9 @@ cakeStatusText.TextXAlignment = Enum.TextXAlignment.Left
 cakeStatusText.Parent = cakeStatusCard
 
 local isCakePrinceReady = false
+-- Chỉ true khi phản hồi xác nhận portal đã mở, boss đã xuất hiện, hoặc nhân vật đã vào Dimensional Shift.
+-- Đủ 500 quái / nhận câu hỏi mở cổng KHÔNG đồng nghĩa portal đã mở.
+Q.cakePortalOpen = Q.cakePortalOpen or false
 -- Thời điểm gần nhất nhân vật đã thử đi vào cổng Cake Prince.
 local cakePortalEntryAt = 0
 -- Giữ trạng thái đã chuyển qua cổng để vòng farm không bay ngược về tọa độ cổng
@@ -3006,6 +3009,7 @@ function Q.cakeEnterGate(hrp)
         Q.cakeGateSince = nil
         Q.cakeReturnAfterDeath = false
         Q.cakeBossSeen = false
+        Q.cakePortalOpen = false
         Q.cakeLatchUntil = 0
         Q.cakeNeedSummon = true
         Q.cakeSummonAt = 0
@@ -3062,6 +3066,7 @@ end
 -- Đọc nhiều dạng phản hồi của CakePrinceSpawner, kể cả số 0 và tiến độ dạng a/b.
 function Q.UpdateCakeSpawnerStatus(result)
     if result == nil then return end
+
     local raw = tostring(result)
     local lower = string.lower(raw)
     local current, total = string.match(raw, "(%d+)%s*/%s*(%d+)")
@@ -3076,40 +3081,77 @@ function Q.UpdateCakeSpawnerStatus(result)
         remaining = tonumber(result) or tonumber(string.match(raw, "(%d+)"))
     end
 
-    local readyText = (string.find(lower, "spawned", 1, true) ~= nil)
-        or (string.find(lower, "has appeared", 1, true) ~= nil)
-        or (string.find(lower, "portal is open", 1, true) ~= nil)
-        or (string.find(lower, "dimension is open", 1, true) ~= nil)
-        or (string.find(lower, "ready to fight", 1, true) ~= nil)
-        or (lower == "open")
-    local negatedReady = string.find(lower, "not open", 1, true)
-        or string.find(lower, "not spawned", 1, true)
-        or string.find(lower, "not ready", 1, true)
-    -- FIX: khi đủ 500 quái, server trả câu hỏi kiểu "Do you want to open the portal now?" (không có số) nên bản cũ
-    -- coi là "chưa sẵn sàng" -> không bao giờ mở cổng / không bay vào cổng. Nhận diện câu này -> cần triệu hồi (mở cổng).
-    local askPortal = string.find(lower, "open the portal", 1, true) ~= nil or string.find(lower, "open portal", 1, true) ~= nil
-    local liveBoss = Q.CakeHasLiveBoss()
-    if askPortal then Q.cakeNeedSummon = true end
-    if liveBoss or askPortal or (readyText and not negatedReady) then
-        Q.cakeLatchUntil = tick() + 150   -- "chốt" trạng thái sẵn sàng để remote báo số quái không kéo script quay lại farm quái
-    end
-    local latched = tick() < (Q.cakeLatchUntil or 0)
-    local ready = liveBoss or askPortal or latched or (not negatedReady and (readyText or (remaining ~= nil and remaining <= 0)))
+    -- Những phản hồi này xác nhận cổng/dimension đã mở thật sự.
+    -- Thêm "portal is already open" vì chuỗi này không khớp với "portal is open".
+    local explicitlyOpen =
+        string.find(lower, "portal is already open", 1, true) ~= nil
+        or string.find(lower, "already open", 1, true) ~= nil
+        or string.find(lower, "portal is open", 1, true) ~= nil
+        or string.find(lower, "dimension is open", 1, true) ~= nil
+        or string.find(lower, "dimension has spawned", 1, true) ~= nil
+        or string.find(lower, "has appeared", 1, true) ~= nil
+        or string.find(lower, "spawned", 1, true) ~= nil
+        or string.find(lower, "ready to fight", 1, true) ~= nil
+        or lower == "open"
 
-    if ready then
+    local explicitlyClosed =
+        string.find(lower, "not open", 1, true) ~= nil
+        or string.find(lower, "not spawned", 1, true) ~= nil
+        or string.find(lower, "not ready", 1, true) ~= nil
+
+    -- Đây chỉ là lời mời xác nhận "Yes", không phải bằng chứng cổng đã mở.
+    local askPortal =
+        string.find(lower, "do you want to open the portal", 1, true) ~= nil
+        or string.find(lower, "open the portal now", 1, true) ~= nil
+        or string.find(lower, "open portal", 1, true) ~= nil
+
+    local liveBoss = Q.CakeHasLiveBoss()
+    if liveBoss or (explicitlyOpen and not explicitlyClosed) then
+        Q.cakePortalOpen = true
+        Q.cakeNeedSummon = false
+        Q.cakeLatchUntil = tick() + 150
         isCakePrinceReady = true
         EH.cakeLeft = 0
-        cakeStatusText.Text = Q.CakeHasLiveBoss()
-            and "👑 Cake Prince / Dough King đang xuất hiện!"
-            or "👑 Cake Prince: đủ điều kiện / cổng đã mở!"
+        cakeStatusText.Text = liveBoss
+            and "👑 Cake Prince / Dough King đã xuất hiện — bay vào cổng để farm!"
+            or "✅ Đã xác nhận cổng Cake Prince mở — đang bay đến cổng..."
+        return
+    end
+
+    -- Chỉ gửi yêu cầu mở cổng khi chưa có một lượt portal/boss đã được xác nhận.
+    local alreadyInRun = Q.cakePortalOpen
+        or Q.cakePortalTransitioned
+        or Q.cakeReturnAfterDeath
+        or (Q.cakeBossSeen == true)
+    if not alreadyInRun and (askPortal or (remaining ~= nil and remaining <= 0)) then
+        Q.cakeNeedSummon = true
+    end
+
+    -- Không dùng bộ đếm 0 hoặc câu hỏi mở cổng để tự đánh dấu là cổng đã mở.
+
+    if explicitlyClosed and not Q.cakePortalTransitioned and not Q.cakeReturnAfterDeath and not Q.cakeBossSeen then
+        Q.cakePortalOpen = false
+        alreadyInRun = false
+    end
+
+    isCakePrinceReady = alreadyInRun
+    if isCakePrinceReady then
+        EH.cakeLeft = 0
+        cakeStatusText.Text = "✅ Cổng đã được xác nhận — đang tìm cổng/boss Cake Prince..."
     elseif remaining ~= nil then
-        isCakePrinceReady = false
         EH.cakeLeft = math.max(0, remaining)
-        cakeStatusText.Text = "🎂 Cake Prince còn lại: " .. tostring(EH.cakeLeft) .. " / 500 con"
+        if EH.cakeLeft <= 0 or askPortal then
+            cakeStatusText.Text = "🎂 Đủ điều kiện 500 quái — đang mở/xác minh cổng; chưa xác nhận thì tiếp tục farm Cake Land."
+        else
+            cakeStatusText.Text = "🎂 Cake Prince còn lại: " .. tostring(EH.cakeLeft) .. " / 500 con"
+        end
     else
-        isCakePrinceReady = false
         EH.cakeLeft = nil
-        cakeStatusText.Text = "🎂 " .. raw
+        if askPortal then
+            cakeStatusText.Text = "🎂 Đã đủ điều kiện nhưng cổng chưa xác nhận mở — đang thử mở cổng..."
+        else
+            cakeStatusText.Text = "🎂 Đang kiểm tra cổng Cake Prince: " .. raw
+        end
     end
 end
 
@@ -3127,26 +3169,29 @@ _G.MHSpawn(function()
                 local result = commF:InvokeServer("CakePrinceSpawner")
                 Q.UpdateCakeSpawnerStatus(result)
 
-                -- TRIỆU HỒI: đủ điều kiện -> gửi lệnh mở cổng (thử lần lượt không tham số / tham số true, cách nhau 8s)
-                -- Chỉ khi đang farm Cake Prince (không chạy khi Auto Dough King điều khiển, vì khi đó phải nói chuyện drip_mama).
+                -- Chỉ chọn "Yes" khi Drip_mama cho mở cổng; không giả định lệnh gửi đi là mở thành công.
+                -- Nếu server chưa xác nhận mở cổng, isCakePrinceReady vẫn false và vòng chính tiếp tục farm Cake Land.
                 if Q.cakeNeedSummon and autoFarmEnabled and selectedFarmTarget == "Cake Prince" and World3
                     and not (Q.DK and Q.DK.on) and not Q.CakeHasLiveBoss()
                     and tick() - (Q.cakeSummonAt or 0) >= 8 then
                     Q.cakeSummonAt = tick()
                     Q.cakeSummonN = (Q.cakeSummonN or 0) + 1
                     Q.cakeNeedSummon = false
-                    local okS, r2
-                    -- "CakePrinceSpawner", true = MỞ cổng (đồng ý hộp thoại); không tham số chỉ để kiểm tra.
-                    -- Lần lẻ gọi mở cổng trước, lần chẵn gọi bản kiểm tra dự phòng.
-                    if Q.cakeSummonN % 2 == 1 then
-                        okS, r2 = pcall(function() return commF:InvokeServer("CakePrinceSpawner", true) end)
+                    local okS, r2 = pcall(function()
+                        return commF:InvokeServer("CakePrinceSpawner", true)
+                    end)
+                    if okS then
+                        Q.UpdateCakeSpawnerStatus(r2)
+                        if not isCakePrinceReady then
+                            cakeStatusText.Text = "🎂 Đã gửi xác nhận mở cổng; chưa thấy trạng thái cổng mở nên tiếp tục farm Cake Land và kiểm tra lại..."
+                            -- Cho phép thử lại nếu server vẫn trả lời rằng cần xác nhận mở cổng.
+                            if r2 == nil then Q.cakeNeedSummon = true end
+                        end
                     else
-                        okS, r2 = pcall(function() return commF:InvokeServer("CakePrinceSpawner") end)
+                        Q.cakeNeedSummon = true
+                        cakeStatusText.Text = "⚠️ Gửi lệnh mở cổng thất bại; tiếp tục farm Cake Land và sẽ thử lại."
                     end
-                    Q.cakeLatchUntil = tick() + 150
-                    isCakePrinceReady = true
-                    cakeStatusText.Text = "👑 Đã gửi lệnh triệu hồi Cake Prince -> bay vào cổng (" .. tostring(r2) .. ")"
-                    print("[CakePrince] Triệu hồi lần", Q.cakeSummonN, okS, r2)
+                    print("[CakePrince] Gửi lệnh mở cổng lần", Q.cakeSummonN, okS, r2)
                 end
             end
         end)
@@ -10433,10 +10478,10 @@ function FA.watchDeath(char)
         local pos = hrp and hrp.Position
         FA.resetFlightState()
 
-        -- Cake Prince: nếu chết trong lúc farm, giữ trạng thái boss đã được gọi.
-        -- Sau khi nhân vật hồi sinh, vòng farm sẽ bay trở lại cổng và vào khu boss lần nữa.
+        -- Chỉ quay lại cổng sau khi chết nếu trước đó đã xác nhận portal/boss.
+        -- Nếu chết khi đang farm quái Cake Land thì không tự giả lập trạng thái đã mở cổng.
         if autoFarmEnabled and selectedFarmTarget == "Cake Prince" and World3 and not (Q.DK and Q.DK.on) then
-            Q.cakeReturnAfterDeath = true
+            local hadOpenPortalRun = Q.cakePortalOpen or Q.cakePortalTransitioned or Q.cakeBossSeen or cakePortalEntryAt > 0
             Q.cakePortalTransitioned = false
             Q.cakePortalWaitPos = nil
             Q.cakePortalTransitionedAt = 0
@@ -10446,13 +10491,24 @@ function FA.watchDeath(char)
             Q.cakeLastTouch = 0
             Q.cakeGateSince = nil
             Q._cakeBossCache = nil
-            isCakePrinceReady = true
-            Q.cakeBossSeen = true
-            Q.cakeBossSeenAt = tick()
-            Q.cakeNeedSummon = false
-            Q.cakeLatchUntil = tick() + 180
-            cakeStatusText.Text = "💀 Đã chết — hồi sinh xong sẽ quay lại cổng Cake Prince..."
-            print("[CakePrince] Người chơi chết khi farm; sẽ quay lại cổng sau khi hồi sinh")
+            if hadOpenPortalRun then
+                Q.cakePortalOpen = true
+                Q.cakeReturnAfterDeath = true
+                isCakePrinceReady = true
+                Q.cakeBossSeen = true
+                Q.cakeBossSeenAt = tick()
+                Q.cakeNeedSummon = false
+                Q.cakeLatchUntil = tick() + 180
+                cakeStatusText.Text = "💀 Đã chết trong khu boss — hồi sinh xong sẽ quay lại cổng Cake Prince..."
+                print("[CakePrince] Người chơi chết trong lượt boss/portal đã xác nhận; sẽ quay lại cổng")
+            else
+                Q.cakePortalOpen = false
+                Q.cakeReturnAfterDeath = false
+                Q.cakeBossSeen = false
+                isCakePrinceReady = false
+                cakeStatusText.Text = "💀 Đã chết khi farm Cake Land — hồi sinh xong tiếp tục farm và kiểm tra cổng."
+                print("[CakePrince] Người chơi chết trước khi cổng mở; sẽ tiếp tục farm Cake Land")
+            end
         end
 
         _G.LastDeathInfo = string.format("Chết tại (%.0f, %.0f, %.0f) | farm=%s elite=%s raid=%s",
@@ -10640,6 +10696,9 @@ _G.MHSpawn(function()
                         local gateDistance = (hrp.Position - CAKE_PRINCE_GATE_POS).Magnitude
                         if not Q.cakePortalTransitioned and tick() - cakePortalEntryAt <= 60 and gateDistance > 180 then
                             Q.cakePortalTransitioned = true
+                            Q.cakePortalOpen = true
+                            isCakePrinceReady = true
+                            Q.cakeNeedSummon = false
                             Q.cakePortalTransitionedAt = tick()
                             Q.cakePortalWaitPos = hrp.Position
                             Q.cakeLatchUntil = math.max(Q.cakeLatchUntil or 0, tick() + 60)
@@ -10655,6 +10714,7 @@ _G.MHSpawn(function()
                             print("[CakePrince] Phát hiện đã qua cổng; chờ/tìm boss tại khu vực mới")
                         end
                         if Q.cakePortalTransitioned then
+                            Q.cakePortalOpen = true
                             isCakePrinceReady = true
                             -- Nếu khu boss không tải sau thời gian dài, cho phép thử cổng lại thay vì kẹt vô hạn.
                             if not Q.cakeBossSeenInBossArea and tick() - (Q.cakePortalTransitionedAt or 0) > 45 then
@@ -10699,7 +10759,9 @@ _G.MHSpawn(function()
                     if selectedFarmTarget == "Cake Prince" then
                         local liveCakeBoss = Q.FindLiveCakeBoss()
                         if liveCakeBoss then
+                            Q.cakePortalOpen = true
                             isCakePrinceReady = true
+                            Q.cakeNeedSummon = false
                             EH.cakeLeft = 0
                             Q.cakeBossSeen, Q.cakeBossSeenAt = true, tick()
                             Q.cakeLatchUntil = tick() + 150
@@ -10707,7 +10769,7 @@ _G.MHSpawn(function()
                             -- Sau khi cổng được kích hoạt đủ 2 giây, chọn boss làm mục tiêu chính.
                             -- Danh sách Fast Attack bên dưới cũng quét Model lồng bên trong Enemies để không bỏ sót boss.
                             -- Quy trình vẫn là: farm quái đảo bánh -> boss xuất hiện -> vào cổng -> áp sát và đánh boss.
-                            local passedGate = cakePortalEntryAt > 0 and (tick() - cakePortalEntryAt) >= 2
+                            local passedGate = Q.cakePortalTransitioned == true
                             if passedGate then
                                 enemy = liveCakeBoss
                                 if Q.cakePortalTransitioned then Q.cakeBossSeenInBossArea = true end
@@ -10726,6 +10788,7 @@ _G.MHSpawn(function()
                             Q.cakeBossSeen = false
                             Q.cakeLatchUntil = 0
                             Q.cakeNeedSummon = false
+                            Q.cakePortalOpen = false
                             isCakePrinceReady = false
                             EH.cakeLeft = nil
                             cakePortalEntryAt = 0

@@ -338,8 +338,8 @@ end
 
 -- =========================================================
 -- LƯU CÀI ĐẶT (bền qua server hop): _G bị xoá khi đổi server nên cài đặt phe /
--- auto load được ghi vào file MinhHub_Settings.json (writefile/readfile).
--- Mặc định: TỰ ĐỘNG VÀO PHE = BẬT (Hải tặc), Auto Load = BẬT.
+-- Cài đặt chọn phe được ghi vào file MinhHub_Settings.json (writefile/readfile).
+-- Mặc định: TỰ ĐỘNG VÀO PHE = BẬT (Hải tặc).
 -- =========================================================
 do
     local HttpService = game:GetService("HttpService")
@@ -364,200 +364,12 @@ do
     -- File thắng _G (vì _G ở server mới chỉ có giá trị cũ do bootstrap truyền sang)
     if data.autoTeam ~= nil then _G.MinhHubAutoSelectTeam = (data.autoTeam == true) end
     if data.team == "Marines" or data.team == "Pirates" then _G.MinhHubSelectedTeam = data.team end
-    if data.autoLoad ~= nil then _G.MinhHubAutoLoadEnabled = (data.autoLoad == true) end
     -- Mặc định lần đầu chạy: bật tự động chọn phe
     if _G.MinhHubAutoSelectTeam == nil then _G.MinhHubAutoSelectTeam = true end
     if _G.MinhHubSelectedTeam == nil then _G.MinhHubSelectedTeam = "Pirates" end
 end
 
 -- =========================================================
--- AUTO LOAD AFTER TELEPORT / SERVER HOP
--- Dùng queue_on_teleport để chạy lại script ở server mới.
--- Bootstrap tìm source theo thứ tự:
---   1) AUTOLOAD_URL (RAW URL, nếu điền)  -> tải xong sẽ lưu cache MinhHub_Cache.lua
---   2) file cache MinhHub_Cache.lua
---   3) các file tên cố định bên dưới
---   4) quét toàn bộ thư mục workspace: file .lua/.txt có dòng đầu "MInh HUB-BLOXFRUITS"
--- => Chỉ cần LƯU script này thành 1 file .lua/.txt trong thư mục workspace của executor
---    (tên bất kỳ), hoặc điền AUTOLOAD_URL một lần.
--- =========================================================
-do
-    local autoLoad = _G.MinhHubAutoLoad or {}
-    _G.MinhHubAutoLoad = autoLoad
-
-    -- Dán RAW URL (pastebin/github raw...) vào đây nếu bạn host script online.
-    local AUTOLOAD_URL = ""
-
-    autoLoad.enabled = (_G.MinhHubAutoLoadEnabled ~= false)
-    autoLoad.status = autoLoad.status or "Đang kiểm tra hỗ trợ Auto Load..."
-    autoLoad.statusLabel = autoLoad.statusLabel or nil
-    autoLoad.lastQueuedAt = autoLoad.lastQueuedAt or 0
-
-    function autoLoad.setStatus(message)
-        autoLoad.status = tostring(message or "-")
-        if autoLoad.statusLabel and autoLoad.statusLabel.Parent then
-            pcall(function() autoLoad.statusLabel.Text = "Auto Load: " .. autoLoad.status end)
-        end
-    end
-
-    local function getQueueFunction()
-        local fn
-        pcall(function()
-            if type(queue_on_teleport) == "function" then
-                fn = queue_on_teleport
-            elseif type(queueonteleport) == "function" then
-                fn = queueonteleport
-            elseif type(syn) == "table" and type(syn.queue_on_teleport) == "function" then
-                fn = syn.queue_on_teleport
-            elseif type(fluxus) == "table" and type(fluxus.queue_on_teleport) == "function" then
-                fn = fluxus.queue_on_teleport
-            end
-        end)
-        return fn
-    end
-
-    local QUEUED_BOOTSTRAP = [==[
--- Minh Hub bootstrap (chạy ở server mới)
-if _G.MinhHubBootRan then return end
-_G.MinhHubBootRan = true
-__MINH_HUB_PREFIX__
-if not game:IsLoaded() then game.Loaded:Wait() end
-local Players = game:GetService("Players")
-while not Players.LocalPlayer do task.wait(0.2) end
-task.wait(1)
-
-local AUTOLOAD_URL = __MINH_HUB_URL__
-local CACHE_FILE = "MinhHub_Cache.lua"
-local MARKER = "MInh HUB-BLOXFRUITS"
-local FILES = {
-    CACHE_FILE,
-    "MinhHub_TeamSelect_Updated.lua", "MinhHub_TeamSelect_Updated.txt",
-    "MinhHub.lua", "MinhHub.txt", "script.txt", "script.lua",
-    "workspace/MinhHub_TeamSelect_Updated.lua", "workspace/MinhHub_TeamSelect_Updated.txt",
-}
-
-local function executeSource(source)
-    if type(source) ~= "string" or #source < 1000 then return false end
-    local compiler = loadstring or load
-    if type(compiler) ~= "function" then
-        warn("[Minh Hub Auto Load] Executor không hỗ trợ loadstring/load.")
-        return false
-    end
-    local fn, compileError = compiler(source)
-    if not fn then
-        warn("[Minh Hub Auto Load] Lỗi biên dịch: " .. tostring(compileError))
-        return false
-    end
-    task.spawn(function()
-        local ok, runError = pcall(fn)
-        if not ok then warn("[Minh Hub Auto Load] Lỗi khi chạy script: " .. tostring(runError)) end
-    end)
-    return true
-end
-
-local function isHubSource(source)
-    return type(source) == "string" and #source > 1000 and source:sub(1, 400):find(MARKER, 1, true) ~= nil
-end
-
-local function readSettingsUrl()
-    local ok, url = pcall(function()
-        if type(isfile) == "function" and isfile("MinhHub_Settings.json") then
-            local d = game:GetService("HttpService"):JSONDecode(readfile("MinhHub_Settings.json"))
-            return d and d.url
-        end
-    end)
-    if ok and type(url) == "string" and url ~= "" then return url end
-end
-
--- 1) URL
-local url = (AUTOLOAD_URL ~= "" and AUTOLOAD_URL) or readSettingsUrl()
-if url then
-    local ok, source = pcall(function() return game:HttpGet(url) end)
-    if ok and executeSource(source) then
-        pcall(function() if type(writefile) == "function" then writefile(CACHE_FILE, source) end end)
-        return
-    end
-    warn("[Minh Hub Auto Load] Không tải được URL; thử file cục bộ.")
-end
-
--- 2) + 3) file cố định
-if type(readfile) == "function" then
-    for _, path in ipairs(FILES) do
-        local ok, source = pcall(function() return readfile(path) end)
-        if ok and isHubSource(source) and executeSource(source) then return end
-    end
-    -- 4) quét workspace
-    if type(listfiles) == "function" then
-        local function scan(folder, depth)
-            local okL, list = pcall(listfiles, folder)
-            if not okL or type(list) ~= "table" then return false end
-            for _, path in ipairs(list) do
-                local low = tostring(path):lower()
-                if low:match("%.lua$") or low:match("%.txt$") or low:match("%.luau$") then
-                    local ok, source = pcall(readfile, path)
-                    if ok and isHubSource(source) and executeSource(source) then return true end
-                elseif depth < 2 and not low:match("%.%w+$") then
-                    if scan(path, depth + 1) then return true end
-                end
-            end
-            return false
-        end
-        if scan("", 0) or scan(".", 0) then return end
-    end
-end
-warn("[Minh Hub Auto Load] Chưa chạy lại: hãy lưu script thành file .lua/.txt trong thư mục workspace của executor (dòng đầu phải giữ nguyên) hoặc điền AUTOLOAD_URL.")
-]==]
-
-    function autoLoad.schedule(reason)
-        if not autoLoad.enabled then
-            autoLoad.setStatus("Đã tắt")
-            return false
-        end
-        local queueFn = getQueueFunction()
-        if not queueFn then
-            autoLoad.setStatus("Executor không hỗ trợ queue_on_teleport")
-            return false
-        end
-
-        -- Truyền cài đặt hiện tại sang server mới (phòng khi executor không có writefile)
-        local prefix = string.format(
-            "_G.MinhHubAutoSelectTeam=%s _G.MinhHubSelectedTeam=%q _G.MinhHubAutoLoadEnabled=%s",
-            tostring(_G.MinhHubAutoSelectTeam == true),
-            tostring(_G.MinhHubSelectedTeam == "Marines" and "Marines" or "Pirates"),
-            tostring(autoLoad.enabled == true))
-        local urlLiteral = string.format("%q", AUTOLOAD_URL)
-        local queuedCode = QUEUED_BOOTSTRAP
-            :gsub("__MINH_HUB_PREFIX__", function() return prefix end)
-            :gsub("__MINH_HUB_URL__", function() return urlLiteral end)
-        local ok, err = pcall(queueFn, queuedCode)
-        if ok then
-            autoLoad.lastQueuedAt = tick()
-            autoLoad.setStatus("Đã xếp hàng chạy lại sau khi chuyển server")
-            return true
-        end
-        autoLoad.setStatus("Không xếp hàng được: " .. tostring(err))
-        return false
-    end
-
-    function autoLoad.setEnabled(state)
-        autoLoad.enabled = state == true
-        _G.MinhHubAutoLoadEnabled = autoLoad.enabled
-        local st = _G.MinhHubSettings
-        if st then st.data.autoLoad = autoLoad.enabled; st.save() end
-        if autoLoad.enabled then
-            autoLoad.schedule("bật từ menu")
-        else
-            autoLoad.setStatus("Đã tắt; mã đã xếp hàng trước đó có thể vẫn còn trong executor")
-        end
-    end
-
-    -- Xếp hàng ngay khi khởi động; bản chạy ở server mới sẽ tự xếp hàng cho lần hop kế tiếp.
-    if autoLoad.enabled then
-        autoLoad.schedule("khởi động")
-    else
-        autoLoad.setStatus("Đã tắt")
-    end
-end
 
 -- HÀM LẤY LEVEL AN TOÀN
 local function getLevel()
@@ -3716,7 +3528,7 @@ createToggleFeature(raidPage, "AutoRaidToggle", "Auto Raid", "Tự động bay d
         if toggleUpdateFuncs["AutoFarmBossToggle"] then toggleUpdateFuncs["AutoFarmBossToggle"](false) end
         autoFarmEnabled = false
         autoFarmMaterialEnabled = false
-        RAID_FIXED.completed = false
+        if _G.MHRaidFixed then _G.MHRaidFixed.completed = false end
     end
 end)
 
@@ -3784,6 +3596,14 @@ local RAID_FIXED = {
     holdConnection = nil,
     holdCF = nil,
 }
+_G.MHRaidFixed = RAID_FIXED
+
+-- Độ cao đứng trên quái khi Raid: THEO thanh "Độ cao Farm" (trước đây cố định 35, kéo thanh không có tác dụng)
+function RAID_FIXED.height()
+    local h = tonumber(farmDistanceHeight)
+    if not h or h <= 0 then h = tonumber(RAID_FIXED.lockHeight) or 35 end
+    return h
+end
 
 do
 -- Tên hiển thị trong menu -> tên chip server nhận (thử lần lượt)
@@ -4007,8 +3827,9 @@ local function isRaidActive()
 
         if locations and not timerOn and not RAID_FIXED.baseReady then
             for i = 1, 8 do
-                if locations:FindFirstChild("Island " .. i) then
-                    RAID_FIXED.baseIslands[i] = true
+                local baseIsl = locations:FindFirstChild("Island " .. i)
+                if baseIsl then
+                    RAID_FIXED.baseIslands[i] = baseIsl
                 end
             end
             RAID_FIXED.baseReady = true
@@ -4022,7 +3843,14 @@ local function isRaidActive()
 
         if locations then
             for i = 1, 8 do
-                local isl = (not RAID_FIXED.baseIslands[i]) and locations:FindFirstChild("Island " .. i)
+                local curIsl = locations:FindFirstChild("Island " .. i)
+                local baseInst = RAID_FIXED.baseIslands[i]
+                -- đảo cũ đã biến mất / bị thay bằng đảo mới (Raid mới) -> không còn bị bỏ qua
+                if baseInst and (typeof(baseInst) ~= "Instance" or not baseInst.Parent or baseInst ~= curIsl) then
+                    RAID_FIXED.baseIslands[i] = nil
+                    baseInst = nil
+                end
+                local isl = (not baseInst) and curIsl
                 if isl then
                     -- FIX: đảo còn sót lại sau Raid (không có Timer / quái / người chơi gần) làm Raid bị báo "đang chạy"
                     -- vĩnh viễn -> Auto Buy Chip & Auto Start Raid bị chặn. Cần có bằng chứng Raid thật.
@@ -4048,7 +3876,7 @@ local function isRaidActive()
                     end
                     RAID_FIXED.staleSince = RAID_FIXED.staleSince or tick()
                     if tick() - RAID_FIXED.staleSince > 8 then
-                        RAID_FIXED.baseIslands[i] = true   -- đảo sót: bỏ qua
+                        RAID_FIXED.baseIslands[i] = isl   -- đảo sót: bỏ qua (theo đúng instance này)
                         RAID_FIXED.staleSince = nil
                     else
                         RAID_FIXED.activeReason = "Island " .. i .. " (chờ xác nhận)"
@@ -4278,6 +4106,23 @@ local function findRaidSummonDetector()
     return nil
 end
 
+-- InvokeServer có timeout: nếu server không trả lời thì không bị treo vĩnh viễn
+local function invokeRemote(remote, timeout, ...)
+    local args = table.pack(...)
+    local done, ok, res = false, false, nil
+    _G.MHSpawn(function()
+        ok, res = pcall(function()
+            return remote:InvokeServer(table.unpack(args, 1, args.n))
+        end)
+        done = true
+    end)
+    local deadline = tick() + (timeout or 5)
+    while not done and tick() < deadline do
+        task.wait(0.05)
+    end
+    return done and ok, res
+end
+
 local function prepareRaidRoom()
     local commF = getCommF()
     local target = getRaidRoomTarget()
@@ -4316,9 +4161,7 @@ local function prepareRaidRoom()
         target = CFrame.new(detector.Parent.Position + Vector3.new(0, 4, 0))
     elseif World3 and (hrp.Position - target.Position).Magnitude > 600 then
         RAID_FIXED.lastStatus = "Sea 3: requestEntrance..."
-        pcall(function()
-            commF:InvokeServer("requestEntrance", Vector3.new(-5075.50927734375, 314.5155029296875, -3150.0224609375))
-        end)
+        invokeRemote(commF, 5, "requestEntrance", Vector3.new(-5075.50927734375, 314.5155029296875, -3150.0224609375))
         task.wait(0.6)
 
         detector = findRaidSummonDetector()
@@ -4337,30 +4180,12 @@ local function prepareRaidRoom()
     setRaidHold(target)
 
     -- Đặt spawn point sau khi đã tới phòng.
-    pcall(function()
-        commF:InvokeServer("SetSpawnPoint")
-    end)
+    invokeRemote(commF, 5, "SetSpawnPoint")
 
     task.wait(0.35)
     return true, "Đã tới phòng Raid"
 end
 
--- InvokeServer có timeout: nếu server không trả lời thì không bị treo vĩnh viễn
-local function invokeRemote(remote, timeout, ...)
-    local args = table.pack(...)
-    local done, ok, res = false, false, nil
-    _G.MHSpawn(function()
-        ok, res = pcall(function()
-            return remote:InvokeServer(table.unpack(args, 1, args.n))
-        end)
-        done = true
-    end)
-    local deadline = tick() + (timeout or 5)
-    while not done and tick() < deadline do
-        task.wait(0.05)
-    end
-    return done and ok, res
-end
 
 -- Mua chip: gửi đúng tên chip server nhận, chờ chip vào Backpack.
 -- Lần 1 mua từ xa. Nếu không nhận được chip (một số bản Sea 2 bắt phải đứng gần NPC Raid)
@@ -4390,6 +4215,7 @@ local function buySelectedRaidChip()
     end
 
     RAID_FIXED.buying = true
+    RAID_FIXED.buyingAt = tick()
     RAID_FIXED.nextBuyAt = tick() + (raidRunningNow and 15 or RAID_FIXED.buyCooldown)
 
     local selected = selectedRaidChip or _G.SelectChip or "Flame"
@@ -4499,6 +4325,7 @@ local function clickRaidSummon()
     end
 
     RAID_FIXED.starting = true
+    RAID_FIXED.startingAt = tick()
     RAID_FIXED.nextStartAt = tick() + RAID_FIXED.startCooldown
     local mySession = RAID_FIXED.session
 
@@ -4629,14 +4456,23 @@ local function clickRaidSummon()
                 raidLog("fireclickdetector lỗi:", err)
             else
                 local verifyDeadline = tick() + 3
+                local chipUsed = false
                 while tick() < verifyDeadline do
+                    if not sessionOk() then return false, "Nhân vật đã hồi sinh" end
                     if isRaidActive() then
                         RAID_FIXED.lastStatus = "Raid đã bắt đầu - " .. (World3 and "Sea 3" or "Sea 2")
                         raidLog("Start Raid thành công:", World3 and "Sea 3" or "Sea 2")
                         return true, "Raid đã bắt đầu"
                     end
+                    -- Chip biến mất = server đã nhận lệnh -> chờ Raid xuất hiện, KHÔNG click/mua lại
+                    if not chipUsed and not hasSpecialMicrochip() then
+                        chipUsed = true
+                        verifyDeadline = tick() + 25
+                        RAID_FIXED.lastStatus = "Server đã nhận chip - chờ Raid xuất hiện..."
+                    end
                     task.wait(0.2)
                 end
+                if chipUsed then break end
             end
 
             if attempt < RAID_FIXED.clickRetries then
@@ -4711,6 +4547,8 @@ local function getRaidEnemy(islandIdx)
         end
     end
 
+    local lobbyCF = getRaidRoomTarget()
+    local nearLobby = lobbyCF ~= nil and (lobbyCF.Position - hrp.Position).Magnitude < 1500
     local best, bestDist = nil, math.huge
     for _, enemy in ipairs(enemiesFolder:GetChildren()) do
         local enemyHrp = enemy:FindFirstChild("HumanoidRootPart")
@@ -4718,7 +4556,8 @@ local function getRaidEnemy(islandIdx)
         if enemyHrp and hum and hum.Health > 0 then
             local inArea = false
             if #anchors == 0 then
-                inArea = (enemyHrp.Position - hrp.Position).Magnitude <= 700
+                -- không đọc được đảo Raid: chỉ nhận quái gần người chơi khi KHÔNG đứng ở phòng chờ (tránh đánh nhầm quái thường)
+                inArea = (not nearLobby) and (enemyHrp.Position - hrp.Position).Magnitude <= 700
             else
                 for _, pos in ipairs(anchors) do
                     if (enemyHrp.Position - pos).Magnitude <= radius then
@@ -4787,7 +4626,7 @@ local function startRaidPositionLock(enemy)
             hum.AutoRotate = false
         end
 
-        local livePos = liveEnemyHrp.Position + Vector3.new(0, RAID_FIXED.lockHeight, 0)
+        local livePos = liveEnemyHrp.Position + Vector3.new(0, RAID_FIXED.height(), 0)
 
         -- FIX: bản cũ dùng CFrame.lookAt(livePos, horizontalTarget) nhưng 2 điểm này TRÙNG NHAU
         -- (đứng ngay trên đầu quái) -> CFrame bị NaN -> nhân vật rơi/chết -> reset liên tục.
@@ -4874,7 +4713,7 @@ function RAID_FIXED.scan()
     end
 
     local lobby = getRaidRoomTarget()
-    local atLobby = lobby ~= nil and (lobby.Position - hrp.Position).Magnitude < 400
+    local atLobby = lobby ~= nil and (lobby.Position - hrp.Position).Magnitude < 1500
 
     if not atLobby then
         local folder = workspace:FindFirstChild("Enemies")
@@ -4991,11 +4830,16 @@ local function farmRaidIslands()
             if auraOn and currentHrp then
                 -- KILL AURA (đảo 4-5)
                 stopRaidPositionLock()
+                if RAID_FIXED.auraIsland == curIsland and RAID_FIXED.auraHoldCF
+                    and math.abs((RAID_FIXED.auraHeight or 0) - RAID_FIXED.height()) > 0.5 then
+                    RAID_FIXED.stopAura()   -- người dùng đổi độ cao: tính lại điểm giữ
+                end
                 if RAID_FIXED.auraIsland ~= curIsland or not RAID_FIXED.auraHoldCF then
                     RAID_FIXED.stopAura()
                     RAID_FIXED.auraIsland = curIsland
                     RAID_FIXED.auraGroundY = enemyHrp.Position.Y
-                    RAID_FIXED.auraHoldCF = CFrame.new(enemyHrp.Position + Vector3.new(0, RAID_FIXED.lockHeight, 0))
+                    RAID_FIXED.auraHeight = RAID_FIXED.height()
+                    RAID_FIXED.auraHoldCF = CFrame.new(enemyHrp.Position + Vector3.new(0, RAID_FIXED.auraHeight, 0))
                 end
 
                 local hold = RAID_FIXED.auraHoldCF
@@ -5004,7 +4848,8 @@ local function farmRaidIslands()
                     RAID_FIXED.stopAura()  -- hủy aura cũ, đặt lại điểm giữ mới sau khi bay xong
                     RAID_FIXED.auraIsland = curIsland
                     RAID_FIXED.auraGroundY = enemyHrp.Position.Y
-                    RAID_FIXED.auraHoldCF = CFrame.new(enemyHrp.Position + Vector3.new(0, RAID_FIXED.lockHeight, 0))
+                    RAID_FIXED.auraHeight = RAID_FIXED.height()
+                    RAID_FIXED.auraHoldCF = CFrame.new(enemyHrp.Position + Vector3.new(0, RAID_FIXED.auraHeight, 0))
                     hold = RAID_FIXED.auraHoldCF
                     if raidFlyTo(hold, flySpeed, alive) then
                         setRaidHold(hold)
@@ -5017,7 +4862,7 @@ local function farmRaidIslands()
                     RAID_FIXED.lastStatus = "Kill Aura đảo " .. tostring(curIsland) .. " - đang gom & diệt quái"
                 end
             elseif currentHrp then
-                local targetPos = enemyHrp.Position + Vector3.new(0, RAID_FIXED.lockHeight, 0)
+                local targetPos = enemyHrp.Position + Vector3.new(0, RAID_FIXED.height(), 0)
                 local dist = (currentHrp.Position - targetPos).Magnitude
 
                 if dist > 90 then
@@ -5132,6 +4977,20 @@ _G.MHSpawn(function()
         pcall(function()
             local farmOn  = raidFarmEnabled()
             local startOn = raidStartEnabled()
+
+            -- WATCHDOG: cờ "đang Start / đang mua" kẹt quá lâu (remote treo...) -> tự gỡ để Raid không chết im lặng
+            if RAID_FIXED.starting and tick() - (RAID_FIXED.startingAt or tick()) > 90 then
+                RAID_FIXED.session += 1
+                RAID_FIXED.starting = false
+                setRaidHold(nil)
+                cancelRaidFlight()
+                RAID_FIXED.lastStatus = "Start Raid bị kẹt >90s -> đã reset, thử lại"
+                raidLog("Watchdog: reset cờ starting")
+            end
+            if RAID_FIXED.buying and tick() - (RAID_FIXED.buyingAt or tick()) > 90 then
+                RAID_FIXED.buying = false
+                raidLog("Watchdog: reset cờ buying")
+            end
 
             if (startOn or farmOn) and (World2 or World3) then
                 if not isRaidActive() then
@@ -5592,146 +5451,6 @@ for index, wName in ipairs(weaponTypes) do
     end)
 end
 
--- DANH SÁCH CHỌN SÚNG: liệt kê các súng đang có (balo + đang cầm), chọn 1 súng cụ thể hoặc Auto.
--- Có tác dụng khi Weapon = Gun. Lưu vào MinhHub_Settings.json.
-;(function()
-    local st0 = _G.MinhHubSettings
-    if _G.SelectGun == nil and st0 and type(st0.data.gun) == "string" then _G.SelectGun = st0.data.gun end
-
-    local card = Instance.new("Frame")
-    card.Name = "GunPickerCard"
-    card.Size = UDim2.new(1, 0, 0, 44)
-    card.BackgroundColor3 = BANANA_CARD
-    card.LayoutOrder = 1
-    card.ClipsDescendants = true
-    card.Parent = settingsPage
-    addCorner(card, 8)
-    addStroke(card, BANANA_CARD_BORDER, 1.2)
-
-    local btn = Instance.new("TextButton")
-    btn.Size = UDim2.new(1, 0, 0, 44)
-    btn.BackgroundTransparency = 1
-    btn.Text = ""
-    btn.Parent = card
-
-    local label = Instance.new("TextLabel")
-    label.Size = UDim2.new(1, -45, 1, 0)
-    label.Position = UDim2.new(0, 12, 0, 0)
-    label.BackgroundTransparency = 1
-    label.TextColor3 = Color3.fromRGB(255, 255, 255)
-    label.TextSize = 12
-    label.Font = Enum.Font.GothamBold
-    label.TextXAlignment = Enum.TextXAlignment.Left
-    label.Parent = btn
-
-    local arrow = Instance.new("TextLabel")
-    arrow.Size = UDim2.new(0, 35, 1, 0)
-    arrow.Position = UDim2.new(1, -35, 0, 0)
-    arrow.BackgroundTransparency = 1
-    arrow.Text = "▼"
-    arrow.TextColor3 = BANANA_YELLOW
-    arrow.TextSize = 12
-    arrow.Font = Enum.Font.GothamBold
-    arrow.Parent = btn
-
-    local list = Instance.new("ScrollingFrame")
-    list.Position = UDim2.new(0, 10, 0, 44)
-    list.Size = UDim2.new(1, -20, 0, 0)
-    list.BackgroundTransparency = 1
-    list.BorderSizePixel = 0
-    list.ScrollBarThickness = 3
-    list.CanvasSize = UDim2.new(0, 0, 0, 0)
-    list.AutomaticCanvasSize = Enum.AutomaticSize.Y
-    list.Parent = card
-    local layout = Instance.new("UIListLayout")
-    layout.SortOrder = Enum.SortOrder.LayoutOrder
-    layout.Padding = UDim.new(0, 6)
-    layout.Parent = list
-
-    local function curValue()
-        local v = _G.SelectGun
-        if type(v) == "string" and v ~= "" then return v end
-        return ""
-    end
-    local function refreshLabel()
-        local v = curValue()
-        label.Text = "🔫 Gun: " .. (v ~= "" and v or "Auto (súng bất kỳ)")
-    end
-    refreshLabel()
-
-    local open = false
-    local function close()
-        open = false
-        arrow.Text = "▼"
-        card.Size = UDim2.new(1, 0, 0, 44)
-    end
-
-    local function listGuns()
-        local names, seen = {}, {}
-        local isType = _G.MHIsWeaponType
-        local function scan(c)
-            if not c then return end
-            for _, tl in ipairs(c:GetChildren()) do
-                if tl:IsA("Tool") and not seen[tl.Name] and isType and isType(tl, "Gun") then
-                    seen[tl.Name] = true
-                    names[#names + 1] = tl.Name
-                end
-            end
-        end
-        scan(LocalPlayer:FindFirstChild("Backpack"))
-        scan(LocalPlayer.Character)
-        table.sort(names)
-        return names
-    end
-
-    local function rebuild()
-        for _, c in ipairs(list:GetChildren()) do
-            if c:IsA("TextButton") then c:Destroy() end
-        end
-        local entries = {{text = "Auto (súng bất kỳ)", value = ""}}
-        for _, n in ipairs(listGuns()) do entries[#entries + 1] = {text = n, value = n} end
-        local cur = curValue()
-        for i, e in ipairs(entries) do
-            local b = Instance.new("TextButton")
-            b.Size = UDim2.new(1, -6, 0, 30)
-            b.Text = "   " .. e.text
-            b.TextXAlignment = Enum.TextXAlignment.Left
-            b.Font = Enum.Font.GothamBold
-            b.TextSize = 12
-            b.LayoutOrder = i
-            b.AutoButtonColor = false
-            b.Parent = list
-            addCorner(b, 6)
-            local sel = (e.value == cur)
-            b.BackgroundColor3 = sel and BANANA_YELLOW or Color3.fromRGB(18, 18, 22)
-            b.TextColor3 = sel and BANANA_TEXT_ON or Color3.fromRGB(150, 150, 160)
-            b.MouseButton1Click:Connect(function()
-                _G.SelectGun = e.value
-                local st = _G.MinhHubSettings
-                if st then st.data.gun = e.value; st.save() end
-                refreshLabel()
-                close()
-                -- Đang chọn loại Gun -> đổi súng ngay
-                if _G.SelectWeapon == "Gun" and type(_G.EquipWeapon) == "function" then
-                    _G.MHSpawn(function() pcall(_G.EquipWeapon, "Gun") end)
-                end
-            end)
-        end
-        local shown = math.min(#entries, 5)
-        local h = shown * 30 + math.max(shown - 1, 0) * 6
-        list.Size = UDim2.new(1, -20, 0, h)
-        return h
-    end
-
-    btn.MouseButton1Click:Connect(function()
-        if open then close() return end
-        open = true
-        arrow.Text = "▲"
-        local h = rebuild()
-        card.Size = UDim2.new(1, 0, 0, 44 + h + 10)
-    end)
-end)()
-
 -- HEIGHT SLIDER
 local heightSliderCard = Instance.new("Frame")
 heightSliderCard.Size = UDim2.new(1, 0, 0, 56)
@@ -6085,48 +5804,6 @@ end)
     end)
 end)()
 
--- AUTO LOAD SCRIPT: tự xếp hàng nạp lại khi executor thực hiện teleport/server hop.
-createToggleFeature(settingsPage, "AutoLoadScriptToggle", "Auto Load Script / Tự khởi chạy lại",
-    "Xếp hàng chạy lại Minh Hub khi chuyển server. Cần executor hỗ trợ queue_on_teleport và URL RAW hoặc file đã lưu trong executor.",
-    5, _G.MinhHubAutoLoad and _G.MinhHubAutoLoad.enabled == true, function(state)
-        if _G.MinhHubAutoLoad and _G.MinhHubAutoLoad.setEnabled then
-            _G.MinhHubAutoLoad.setEnabled(state)
-        else
-            _G.MinhHubAutoLoadEnabled = state
-        end
-    end)
-
-;(function()
-    local card = Instance.new("Frame")
-    card.Name = "AutoLoadScriptStatusCard"
-    card.Size = UDim2.new(1, 0, 0, 34)
-    card.BackgroundColor3 = BANANA_CARD
-    card.BackgroundTransparency = 0.2
-    card.LayoutOrder = 6
-    card.Parent = settingsPage
-    addCorner(card, 8)
-    addStroke(card, BANANA_CARD_BORDER, 1)
-
-    local label = Instance.new("TextLabel")
-    label.Name = "AutoLoadScriptStatus"
-    label.Size = UDim2.new(1, -20, 1, 0)
-    label.Position = UDim2.new(0, 10, 0, 0)
-    label.BackgroundTransparency = 1
-    label.Text = "Auto Load: Đang khởi tạo..."
-    label.TextColor3 = Color3.fromRGB(190, 195, 210)
-    label.TextSize = 10
-    label.Font = Enum.Font.Gotham
-    label.TextWrapped = true
-    label.TextXAlignment = Enum.TextXAlignment.Left
-    label.Parent = card
-
-    if _G.MinhHubAutoLoad then
-        _G.MinhHubAutoLoad.statusLabel = label
-        if _G.MinhHubAutoLoad.setStatus then
-            _G.MinhHubAutoLoad.setStatus(_G.MinhHubAutoLoad.status or "Đang kiểm tra hỗ trợ Auto Load...")
-        end
-    end
-end)()
 
 createToggleFeature(settingsPage, nil, "Fast Attack", "Đánh siêu nhanh không delay cho cả Cận chiến, Kiếm & Trái ác quỷ", 11, fastAttackEnabled, function(state) fastAttackEnabled = state end)
 
@@ -6225,6 +5902,50 @@ do
 end
 
 createToggleFeature(settingsPage, nil, "Walk On Water", "Đứng & đi trên mặt nước không mất máu", 31, walkOnWaterEnabled, function(state) walkOnWaterEnabled = state end)
+
+-- XUYÊN TƯỜNG (NOCLIP): mặc định BẬT, lưu vào MinhHub_Settings.json
+Q.NOCLIP = { on = true, orig = setmetatable({}, {__mode = "k"}), parts = {}, char = nil, at = 0 }
+do
+    local nc = Q.NOCLIP
+    local st0 = _G.MinhHubSettings
+    if st0 and st0.data.noclip ~= nil then nc.on = (st0.data.noclip == true) end
+
+    function nc.restore()
+        for part in pairs(nc.orig) do
+            if part.Parent then pcall(function() part.CanCollide = true end) end
+        end
+        table.clear(nc.orig)
+    end
+
+    RunService.Stepped:Connect(function()
+        local char = LocalPlayer.Character
+        if not char then return end
+        if not nc.on then
+            if next(nc.orig) then nc.restore() end
+            return
+        end
+        if nc.char ~= char or tick() - nc.at > 0.5 then
+            nc.char, nc.at, nc.parts = char, tick(), {}
+            for _, p in ipairs(char:GetDescendants()) do
+                if p:IsA("BasePart") then nc.parts[#nc.parts + 1] = p end
+            end
+        end
+        for _, p in ipairs(nc.parts) do
+            if p.Parent and p.CanCollide then
+                nc.orig[p] = true
+                p.CanCollide = false
+            end
+        end
+    end)
+
+    createToggleFeature(settingsPage, "NoclipToggle", "Noclip (Xuyên tường)",
+        "Đi xuyên tường / vật cản (nhân vật vẫn đứng được trên mặt đất)", 35, nc.on, function(state)
+            nc.on = state
+            local st = _G.MinhHubSettings
+            if st then st.data.noclip = state; st.save() end
+            if not state then nc.restore() end
+        end)
+end
 createToggleFeature(settingsPage, nil, "Auto Race V3", "Tự động dùng skill Tộc V3 (Phím T)", 23, autoRaceV3Enabled, function(state) autoRaceV3Enabled = state end)
 createToggleFeature(settingsPage, nil, "Auto Race V4", "Tự động bật Thức Tỉnh Tộc V4 (Phím Y)", 24, autoRaceV4Enabled, function(state) autoRaceV4Enabled = state end)
 createToggleFeature(settingsPage, nil, "Anti AFK", "Tự động chống văng game (Disconnect) khi treo máy", 32, autoAfkEnabled, function(state) autoAfkEnabled = state end)
@@ -6235,6 +5956,9 @@ createInputFeature(settingsPage, "Fast Attack Targets", maxAttackTargets, 13, fu
     maxAttackTargets = math.clamp(math.floor(tonumber(val) or 2), 1, 6)
 end)
 createToggleFeature(settingsPage, nil, "Fast Attack Players", "Đánh nhanh cả người chơi gần đó, kết hợp cùng lúc với Fast Attack quái", 14, FA.playerEnabled, function(state) FA.playerEnabled = state end)
+createToggleFeature(settingsPage, "AutoClickGunToggle", "Auto Click Gun", "Tự động click chuột ảo bắn súng vào quái (cần chọn Weapon = Gun, bật Fast Attack)", 14, true, function(state)
+    FA.gunClickEnabled = state
+end)
 createToggleFeature(settingsPage, nil, "Auto Fast Attack", "Tự bật Fast Attack khi bắt đầu farm và tự đánh khi có mục tiêu trong tầm", 12, FA.auto, function(state)
     FA.auto = state
     if state then fastAttackEnabled = true end
@@ -9219,14 +8943,51 @@ function FA.findGunNetRemotes()
     return list
 end
 
-function FA.gunM1(tool, hrp, targets)
+-- Nhận diện súng: theo ToolTip/tên/remote, hoặc người dùng đang chọn loại vũ khí = Gun
+function FA.isGunTool(tool)
     if not tool then return false end
-    -- Nhận diện súng: theo ToolTip/tên/remote, hoặc người dùng đang chọn loại vũ khí = Gun
     local isGun = isMatchingWeaponType(tool, "Gun")
     if not isGun and (selectedWeapon == "Gun" or _G.SelectWeapon == "Gun") then
         isGun = not isMatchingWeaponType(tool, "Blox Fruit") or tool:FindFirstChild("RemoteFunctionShoot") ~= nil
     end
-    if not isGun then return false end
+    return isGun
+end
+
+-- AIM ẢO CHO SÚNG: script gốc của súng (tool.Activated) ngắm theo Mouse.Hit/Target = vị trí chuột trên màn hình.
+-- Hook đọc Mouse.Hit / Mouse.Target / Mouse.UnitRay: trong lúc bắn thì trả về đúng vị trí QUÁI, nên
+-- tool:Activate() (click ảo, KHÔNG click màn hình) bắn trúng quái dù chuột đang ở đâu.
+function FA.installGunAim()
+    if FA._gunAimHook ~= nil then return FA._gunAimHook end
+    FA._gunAimHook = false
+    if typeof(hookmetamethod) ~= "function" then return false end
+    local okM, mouse = pcall(function() return LocalPlayer:GetMouse() end)
+    if not okM or not mouse then return false end
+    local wrap = (typeof(newcclosure) == "function") and newcclosure or function(f) return f end
+    local isCaller = (typeof(checkcaller) == "function") and checkcaller or function() return false end
+    local old
+    local okH = pcall(function()
+        old = hookmetamethod(game, "__index", wrap(function(self, key)
+            if self == mouse and FA._aimPos and os.clock() < (FA._aimUntil or 0) and not isCaller() then
+                if key == "Hit" then
+                    return CFrame.new(FA._aimPos)
+                elseif key == "Target" then
+                    if FA._aimPart and FA._aimPart.Parent then return FA._aimPart end
+                elseif key == "UnitRay" then
+                    local cam = workspace.CurrentCamera
+                    local org = cam and cam.CFrame.Position or FA._aimPos
+                    local dir = FA._aimPos - org
+                    if dir.Magnitude > 0.01 then return Ray.new(org, dir.Unit) end
+                end
+            end
+            return old(self, key)
+        end))
+    end)
+    FA._gunAimHook = okH and old ~= nil
+    return FA._gunAimHook
+end
+
+function FA.gunM1(tool, hrp, targets)
+    if not FA.isGunTool(tool) then return false end
 
     local first = targets and targets[1]
     if not first or not first.hrp or not first.hrp.Parent then return false end
@@ -9266,6 +9027,18 @@ function FA.gunM1(tool, hrp, targets)
         end
     end
 
+    -- 3) Bắn bằng chính script của súng (tool:Activate) + aim ảo về phía quái
+    --    -> đúng đường bắn thật của game (đủ tham số/ kiểm tra hợp lệ), không click màn hình.
+    local nativeFired = false
+    if FA.installGunAim() then
+        FA._aimPos, FA._aimPart, FA._aimUntil = pos, first.hrp, os.clock() + 0.35
+        if os.clock() - (FA._gunActAt or 0) >= 0.1 then
+            FA._gunActAt = os.clock()
+            nativeFired = pcall(function() tool:Activate() end)
+        end
+        if nativeFired then fired = true end
+    end
+
     -- Chẩn đoán 1 lần cho mỗi súng
     if not FA.gunDiag[tool.Name] then
         FA.gunDiag[tool.Name] = true
@@ -9275,11 +9048,44 @@ function FA.gunM1(tool, hrp, targets)
         end
         local nets = {}
         for _, ev in ipairs(FA.findGunNetRemotes()) do nets[#nets + 1] = ev.Name end
-        print(string.format("[MinhHub][Gun] %s | net remote: %s | remote trong tool: %s | đã bắn: %s",
+        print(string.format("[MinhHub][Gun] %s | net remote: %s | remote trong tool: %s | aim ảo (hookmetamethod): %s | đã bắn: %s",
             tool.Name, #nets > 0 and table.concat(nets, ", ") or "KHÔNG TÌM THẤY",
-            #kids > 0 and table.concat(kids, ", ") or "KHÔNG CÓ", tostring(fired)))
+            #kids > 0 and table.concat(kids, ", ") or "KHÔNG CÓ", tostring(FA._gunAimHook), tostring(fired)))
     end
     return fired
+end
+
+-- AUTO CLICK SÚNG (KHÔNG kéo chuột, KHÔNG xoay camera):
+-- Click chuột ảo ngay tại chỗ con trỏ đang đứng; hướng bắn do aim ảo (hook Mouse.Hit/Target) trỏ vào quái.
+-- Nếu executor không có hookmetamethod thì chỉ dùng tool:Activate() (cũng không di chuyển chuột).
+FA.gunClickEnabled = true
+function FA.gunClick(tool, targets)
+    if not FA.gunClickEnabled or not FA.isGunTool(tool) then return false end
+    if os.clock() - (FA._gunClickAt or 0) < 0.12 then return true end
+    local first = targets and targets[1]
+    if not first or not first.hrp or not first.hrp.Parent then return false end
+    FA._gunClickAt = os.clock()
+
+    -- aim ảo: Mouse.Hit/Target trỏ vào quái trong lúc click (không đụng tới con trỏ thật)
+    local aimOk = FA.installGunAim()
+    if aimOk then
+        FA._aimPos, FA._aimPart, FA._aimUntil = first.hrp.Position, first.hrp, os.clock() + 0.35
+    end
+
+    -- Click tại vị trí con trỏ hiện tại, không gửi MouseMove
+    local clicked = false
+    if okVIM and VirtualInputManager then
+        clicked = pcall(function()
+            local loc = UserInputService:GetMouseLocation()
+            VirtualInputManager:SendMouseButtonEvent(loc.X, loc.Y, 0, true, game, 0)
+            task.wait(0.03)
+            VirtualInputManager:SendMouseButtonEvent(loc.X, loc.Y, 0, false, game, 0)
+        end)
+    end
+    if not clicked then
+        clicked = pcall(function() tool:Activate() end)
+    end
+    return clicked
 end
 
 local function performFastAttackV3()
@@ -9316,17 +9122,22 @@ local function performFastAttackV3()
         gunM1 = FA.gunM1(tool, hrp, targets)
     end
 
+    local isGunTool = FA.isGunTool(tool)
+    -- Auto Click Súng: click chuột ảo vào quái (chạy nền để không chặn vòng Fast Attack)
+    if tool and isGunTool and FA.gunClickEnabled then
+        _G.MHSpawn(function() pcall(FA.gunClick, tool, targets) end)
+    end
     local hasCombatRemote = (RegisterHit ~= nil) or (THit ~= nil)
     -- Khi RegisterHit/THit có sẵn, dùng một luồng đánh qua remote. Tránh gọi Activate +
     -- VirtualUser đồng thời vì dễ tạo input/animation trùng và làm giật màn hình.
-    if tool and not fruitM1 and not gunM1 and not hasCombatRemote
+    if tool and not fruitM1 and not gunM1 and not isGunTool and not hasCombatRemote
         and os.clock() - (FA._toolActivateAt or 0) >= 0.16 then
         FA._toolActivateAt = os.clock()
         pcall(function() tool:Activate() end)
     end
 
     -- Chỉ dùng click ảo làm phương án dự phòng khi KHÔNG có tool và combat remote.
-    if not tool and not fruitM1 and not gunM1 and not hasCombatRemote
+    if not tool and not fruitM1 and not gunM1 and not isGunTool and not hasCombatRemote
         and okVU and VirtualUser and os.clock() - (FA._vuAt or 0) > 0.18 then
         FA._vuAt = os.clock()
         pcall(function()
@@ -9956,8 +9767,13 @@ function TY.swing(char)
         local m = (TY.hover and TY.hover.Parent and TY.hover) or (TY.curMob and TY.curMob.Parent and TY.curMob)
         local mh = m and m:FindFirstChild("HumanoidRootPart")
         if FA.fruitM1(tool, hrp, mh and mh.Position) then return end  -- trái ác quỷ: M1 ảo, không click màn hình
-        if mh and FA.gunM1(tool, hrp, {{model = m, hrp = mh}}) then return end  -- súng: M1 ảo
+        if FA.isGunTool(tool) then
+            -- súng: chỉ bắn bằng remote (M1 ảo), tuyệt đối không click màn hình
+            if mh then FA.gunM1(tool, hrp, {{model = m, hrp = mh}}) end
+            return
+        end
         pcall(function() tool:Activate() end)
+        return   -- đã có tool: không cần VirtualUser click thêm
     end
     if okVU and VirtualUser then
         pcall(function() VirtualUser:CaptureController(); VirtualUser:ClickButton1(Vector2.new(800, 800)) end)
@@ -10278,7 +10094,8 @@ end)
 
                     if not fastAttackEnabled then
                         local tool = char:FindFirstChildOfClass("Tool")
-                        if tool and not FA.fruitM1(tool, hrp, best.hrp.Position) and not FA.gunM1(tool, hrp, {best}) then
+                        if tool and not FA.fruitM1(tool, hrp, best.hrp.Position) and not FA.gunM1(tool, hrp, {best})
+                            and not FA.isGunTool(tool) then
                             pcall(function() tool:Activate() end)
                         end
                     end

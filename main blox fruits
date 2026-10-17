@@ -3129,6 +3129,9 @@ function Q.FindLiveCakeBoss()
     if isLiveBoss(cached) then return cached end
     if now - (Q._cakeBossScanAt or 0) < 0.4 then return nil end
     Q._cakeBossScanAt = now
+    -- Không xoá cache ngay: model boss có thể tạm thời mất HumanoidRootPart/Humanoid
+    -- (stream / đổi phase). Chỉ xoá khi quét lại thật sự không thấy.
+    local previous = cached
     Q._cakeBossCache = nil
 
     local enemies = workspace:FindFirstChild("Enemies")
@@ -3150,6 +3153,16 @@ function Q.FindLiveCakeBoss()
                 Q._cakeBossCache = mob
                 return mob
             end
+        end
+    end
+
+    -- Boss vẫn còn trong workspace và còn máu nhưng vừa mất HumanoidRootPart (stream tạm thời):
+    -- vẫn coi là đang sống, tránh script tưởng boss đã chết -> reset trạng thái.
+    if typeof(previous) == "Instance" and previous.Parent then
+        local pHum = previous:FindFirstChildOfClass("Humanoid")
+        if pHum and pHum.Health > 0 and previous:FindFirstChild("HumanoidRootPart") then
+            Q._cakeBossCache = previous
+            return previous
         end
     end
     return nil
@@ -3343,6 +3356,8 @@ _G.MHSpawn(function()
                 -- Nếu server chưa xác nhận mở cổng, isCakePrinceReady vẫn false và vòng chính tiếp tục farm Cake Land.
                 if Q.cakeNeedSummon and autoFarmEnabled and selectedFarmTarget == "Cake Prince" and World3
                     and not (Q.DK and Q.DK.on) and not Q.CakeHasLiveBoss()
+                    and tick() >= (Q.cakeSummonBlockUntil or 0)
+                    and not Q.cakeBossSeen and not Q.cakePortalTransitioned
                     and tick() - (Q.cakeSummonAt or 0) >= 8 then
                     Q.cakeSummonAt = tick()
                     Q.cakeSummonN = (Q.cakeSummonN or 0) + 1
@@ -11098,6 +11113,13 @@ _G.MHSpawn(function()
                             EH.cakeLeft = 0
                             Q.cakeBossSeen, Q.cakeBossSeenAt = true, tick()
                             Q.cakeLatchUntil = tick() + 150
+                            -- Đang đánh boss: cấm gửi lệnh mở cổng/triệu hồi lại (làm boss reset) và nhớ vị trí boss.
+                            Q.cakeSummonBlockUntil = tick() + 120
+                            Q.cakeNeedSummon = false
+                            do
+                                local lbRoot = liveCakeBoss:FindFirstChild("HumanoidRootPart")
+                                if lbRoot then Q.cakeLastBossPos = lbRoot.Position end
+                            end
 
                             -- Sau khi cổng được kích hoạt đủ 2 giây, chọn boss làm mục tiêu chính.
                             -- Danh sách Fast Attack bên dưới cũng quét Model lồng bên trong Enemies để không bỏ sót boss.
@@ -11113,7 +11135,7 @@ _G.MHSpawn(function()
                                 enemy = nil
                                 cakeStatusText.Text = "🚪 Cake Prince đã xuất hiện — đang bay tới cổng..."
                             end
-                        elseif Q.cakeBossSeen and tick() - (Q.cakeBossSeenAt or 0) > 4
+                        elseif Q.cakeBossSeen and tick() - (Q.cakeBossSeenAt or 0) > 25
                             and not Q.cakeReturnAfterDeath
                             and (not Q.cakePortalTransitioned or Q.cakeBossSeenInBossArea) then
                             -- Chỉ xem là boss đã chết khi đã xác nhận boss ở khu đích;
@@ -11131,6 +11153,9 @@ _G.MHSpawn(function()
                             Q.cakePortalTransitionedAt = 0
                             Q.cakeBossSeenInBossArea = false
                             Q._cakeBossCache = nil
+                            Q.cakeLastBossPos = nil
+                            -- Boss thật sự đã chết: chặn gửi lệnh mở cổng ngay lập tức (đợi đủ điều kiện mới).
+                            Q.cakeSummonBlockUntil = tick() + 20
                         elseif not isCakePrinceReady and cakePortalEntryAt > 0 and not Q.cakePortalTransitioned then
                             cakePortalEntryAt = 0   -- cổng đóng: lần sau vào cổng lại từ đầu
                             Q.cakeTry = 0
@@ -11170,7 +11195,16 @@ _G.MHSpawn(function()
                     else
                         -- Đã qua cổng nhưng boss chưa stream vào client: giữ vị trí hiện tại,
                         -- không lặp lại đường bay về cổng Cake Land.
-                        if selectedFarmTarget == "Cake Prince" and Q.cakePortalTransitioned and cakePortalEntryAt > 0 then
+                        if selectedFarmTarget == "Cake Prince" and Q.cakeBossSeen and Q.cakeLastBossPos
+                            and tick() - (Q.cakeBossSeenAt or 0) <= 25 and not Q.cakeReturnAfterDeath
+                            and (hrp.Position - Q.cakeLastBossPos).Magnitude <= 300 then
+                            -- Boss tạm thời mất khỏi client (stream/đổi phase): đứng giữ vị trí cũ của boss,
+                            -- KHÔNG quay về cổng/Cake Land để tránh làm hỏng lượt đánh boss.
+                            targetEnemy = nil
+                            if currentFlyTween then currentFlyTween:Cancel(); currentFlyTween = nil end
+                            FA.hoverSet(hrp, Q.cakeLastBossPos + Vector3.new(0, heightOffset, 0))
+                            cakeStatusText.Text = "👑 Boss tạm thời mất — đang giữ vị trí chờ boss tải lại..."
+                        elseif selectedFarmTarget == "Cake Prince" and Q.cakePortalTransitioned and cakePortalEntryAt > 0 then
                             targetEnemy = nil
                             if currentFlyTween then currentFlyTween:Cancel(); currentFlyTween = nil end
                             local holdPos = Q.cakePortalWaitPos or hrp.Position
@@ -11647,7 +11681,33 @@ function Q.DK.loop()
     if Q.DK.status ~= "Dough King defeated ✅" then Q.DK.setStatus("Disabled") end
 end
 
-Q.DK.makeUI()
+-- (Đã bỏ thẻ trạng thái "Dough King: ..." trên menu; trạng thái vẫn hiện ở thẻ "Farming" đầu tab.)
+
+-- Kiểm tra đủ nguyên liệu triệu hồi Dough King:
+--   Cần Sweet Chalice (hoặc God's Chalice x1 + Conjured Cocoa x10 để đổi) và đủ 500 quái Cake Land.
+function Q.DK.checkMaterials()
+    local inv = Q.DK.refreshInv(true)
+    local ready, msg
+    if inv.sweet then
+        ready, msg = true, "Đã có Sweet Chalice — đủ nguyên liệu triệu hồi Dough King"
+    elseif inv.gods >= 1 and inv.cocoa >= 10 then
+        ready, msg = true, ("Đủ nguyên liệu đổi Sweet Chalice (God's Chalice %d, Conjured Cocoa %d/10)"):format(inv.gods, inv.cocoa)
+    else
+        local lack = {}
+        if inv.gods < 1 then lack[#lack + 1] = "thiếu God's Chalice (0/1)" end
+        if inv.cocoa < 10 then lack[#lack + 1] = ("thiếu Conjured Cocoa (%d/10)"):format(inv.cocoa) end
+        ready, msg = false, "CHƯA đủ nguyên liệu: " .. table.concat(lack, ", ")
+    end
+    print("[DoughKing] " .. msg)
+    pcall(function()
+        game:GetService("StarterGui"):SetCore("SendNotification", {
+            Title = "Dough King", Text = msg, Duration = 8,
+        })
+    end)
+    return ready, msg
+end
+_G.CheckDoughKing = function() return Q.DK.checkMaterials() end
+
 createToggleFeature(farmPage, "AutoDoughKingToggle", "Auto Dough King",
     "Complete the Sweet Chalice task → defeat 500 mobs in Cake Land → talk to drip_mama → defeat Dough King (Sea 3)",
     32, false, function(state)
@@ -11658,6 +11718,7 @@ createToggleFeature(farmPage, "AutoDoughKingToggle", "Auto Dough King",
         end
         Q.DK.sawBoss = false
         Q.DK.invAt = 0
+        _G.MHSpawn(function() pcall(Q.DK.checkMaterials) end)
         _G.MHSpawn(Q.DK.loop)
     else
         Q.DK.setStatus("Disabled")

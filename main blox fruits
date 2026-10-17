@@ -432,7 +432,6 @@ local autoHakiEnabled         = true  -- Auto Buso Haki
 local autoObservationEnabled  = true  -- Auto Observation Haki / Instinct
 local observationState        = { char = nil, on = false, lastTry = 0, tries = 0, attempts = 0, pressedE = false, busy = false }
 local ensureObservation       -- khai báo trước để nút bật/tắt trong menu gọi được (định nghĩa ở dưới)
-local walkOnWaterEnabled      = true
 local autoRaceV3Enabled       = true
 local autoRaceV4Enabled       = true
 
@@ -1330,6 +1329,29 @@ end
 -- (tương đương bấm Yes trong hộp thoại).
 function Q.enterIfNeeded(hrp, pos)
     if not hrp or not pos then return false end
+
+    -- SEA 1: shared exit from Underwater City for outside destinations.
+    if World1 and hrp.Position.X > 50000 and pos.X < 50000 then
+        local root = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+        if root then
+            local ok, stillTravelling = pcall(function()
+                return Q.flyToUnderwaterExit(root)
+            end)
+            local liveRoot = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+            if liveRoot and liveRoot.Position.X > 50000 then
+                if not ok or stillTravelling == false then
+                    Q.exitNearAt = nil
+                    Q.exitTouchAt = nil
+                end
+                return true
+            end
+            if not ok then
+                Q.qlog("Sea 1: exit failed; retrying Underwater City exit")
+                return true
+            end
+            hrp = liveRoot or hrp
+        end
+    end
 
     -- =========================================================
     -- SEA 2: CURSED SHIP SHARED TRANSIT COORDINATOR
@@ -2354,7 +2376,7 @@ local function createTab(tabName, iconText, isDefault)
 
     -- biểu tượng đơn sắc bên trái tên tab
     do
-        local iconMap = {Farm = "⚔", Boss = "♛", Raid = "☄", Gacha = "✦", Shop = "⛁", Config = "⚙", ESP = "◉", Status = "▤"}
+        local iconMap = {Farm = "⚔", Boss = "♛", Raid = "☄", Gacha = "✦", Shop = "⛁", Player = "♙", Config = "⚙", ESP = "◉", Status = "▤"}
         local ic = Instance.new("TextLabel")
         ic.Size = UDim2.new(0, 22, 1, 0)
         ic.Position = UDim2.new(0, -26, 0, 0)
@@ -2444,6 +2466,7 @@ local bossPage     = createTab("Boss", "👑", false)
 local raidPage     = createTab("Raid", "🔥", false)
 local gachaPage    = createTab("Gacha", "🎲", false)
 local shopPage     = createTab("Shop", "🛒", false)
+-- Player tab removed; Walk On Water is available under Config / Farm Settings.
 local settingsPage = createTab("Config", "⚙️", false)
 
 -- =========================================================
@@ -2498,7 +2521,6 @@ do
         {"Auto Buso Haki", "Tự động Haki Vũ Trang"},
         {"Auto Observation Haki", "Tự động Haki Quan Sát"},
         {"Remove Fog", "Xóa sương mù"},
-        {"Walk On Water", "Đi trên mặt nước"},
         {"Auto Race V3", "Tự động Tộc V3"},
         {"Auto Race V4", "Tự động Tộc V4"},
         {"Anti AFK", "Chống AFK"},
@@ -2607,7 +2629,6 @@ do
         {"Tự động kích hoạt Haki Vũ Trang", "Automatically activate Armament Haki"},
         {"Tự động bật Haki Quan Sát / Instinct (Phím E)", "Automatically activate Observation Haki / Instinct (E key)"},
         {"Giảm Fog/Atmosphere để nhìn xa rõ hơn", "Reduce Fog/Atmosphere for clearer long-distance vision"},
-        {"Đứng & đi trên mặt nước không mất máu", "Stand and walk on water without taking damage"},
         {"Tự động dùng skill Tộc V3 (Phím T)", "Automatically use the Race V3 skill (T key)"},
         {"Tự động bật Thức Tỉnh Tộc V4 (Phím Y)", "Automatically activate Race V4 awakening (Y key)"},
         {"Tự động chống văng game (Disconnect) khi treo máy", "Automatically prevent AFK disconnections"},
@@ -6291,6 +6312,30 @@ end)
 end)()
 
 
+-- WALK ON WATER: đặt toggle trong tab Farm Settings (Config).
+-- Giữ nguyên logic WaterBase-Plane và trạng thái mặc định đang bật.
+_G.WalkonWater = true
+createToggleFeature(settingsPage, "ToggleWalkonWater", "Walk On Water",
+    "Extend the water platform while enabled", 36, true, function(state)
+        _G.WalkonWater = state
+    end)
+
+task.spawn(function()
+    while task.wait(0.5) do
+        pcall(function()
+            local map = workspace:FindFirstChild("Map")
+            local water = map and map:FindFirstChild("WaterBase-Plane")
+            if water and water:IsA("BasePart") then
+                if _G.WalkonWater then
+                    water.Size = Vector3.new(1000, 112, 1000)
+                else
+                    water.Size = Vector3.new(1000, 80, 1000)
+                end
+            end
+        end)
+    end
+end)
+
 createToggleFeature(settingsPage, nil, "Fast Attack", "Very fast, no-delay attacks for Melee, Sword, and Blox Fruit", 11, fastAttackEnabled, function(state) fastAttackEnabled = state end)
 
 -- ==================== DODGE CONFIG GLOBAL ====================
@@ -6387,7 +6432,6 @@ do
     end)
 end
 
-createToggleFeature(settingsPage, nil, "Walk On Water", "Stand and walk on water without taking damage", 31, walkOnWaterEnabled, function(state) walkOnWaterEnabled = state end)
 
 -- XUYÊN TƯỜNG (NOCLIP): mặc định BẬT, lưu vào MinhHub_Settings.json
 Q.NOCLIP = { on = true, orig = setmetatable({}, {__mode = "k"}), parts = {}, char = nil, at = 0 }
@@ -6763,27 +6807,8 @@ end)
 toggleBtn.MouseButton1Click:Connect(toggleMenu)
 closeBtn.MouseButton1Click:Connect(toggleMenu)
 
--- WALK ON WATER & NOCLIP LOGIC
-local waterPlatform = Instance.new("Part")
-waterPlatform.Name = "WaterPlatform"
-waterPlatform.Size = Vector3.new(100, 1, 100)
-waterPlatform.Anchored = true
-waterPlatform.CanCollide = true
-waterPlatform.Transparency = 1
-waterPlatform.Parent = workspace
-
+-- NOCLIP LOGIC
 RunService.Stepped:Connect(function()
-    if walkOnWaterEnabled then
-        local character = LocalPlayer.Character
-        if character and character:FindFirstChild("HumanoidRootPart") then
-            local hrp = character.HumanoidRootPart
-            if hrp.Position.Y <= 15 and hrp.Position.Y >= -100 then
-                waterPlatform.CFrame = CFrame.new(hrp.Position.X, 0, hrp.Position.Z)
-                waterPlatform.CanCollide = true
-            else waterPlatform.CanCollide = false end
-        else waterPlatform.CanCollide = false end
-    else waterPlatform.CanCollide = false end
-
     if autoFarmEnabled or autoFarmMaterialEnabled or autoRaidEnabled or _G.Dungeon or _G.AutoLawRaid or autoChestEnabled or _G.FruitPickupBusy or _G.PirateRaidBusy or _G.EliteHunter or _G.TyrantFarm or _G.TyrantSummon or (Q.SUB and Q.SUB.force) or (_G.__FlyN or 0) > 0 or _G.BuyMeleeActive == true then
         local character = LocalPlayer.Character
         if character then
@@ -6807,43 +6832,6 @@ RunService.Stepped:Connect(function()
         end
     end
 end)
-
--- SÀN CỐ ĐỊNH TRÊN MẶT NƯỚC (200 x 2 x 200) - dùng chung toggle "Walk On Water"
--- Mặt trên sàn luôn ở (-4603.89, 0.30, -3169.39). Không khóa CanCollide theo độ cao nhân vật,
--- nên đứng trên Y=15 hay chưa rơi xuống vùng kiểm tra vẫn đứng được. Part bị xóa thì tự tạo lại.
-do
-    local WATER_SURFACE_POSITION = Vector3.new(-4603.89, 0.30, -3169.39)
-    local WATER_PLATFORM_SIZE = Vector3.new(200, 2, 200)
-    local fixedCF = CFrame.new(
-        WATER_SURFACE_POSITION.X,
-        WATER_SURFACE_POSITION.Y - (WATER_PLATFORM_SIZE.Y / 2),
-        WATER_SURFACE_POSITION.Z
-    )
-    local fixedPlatform = Instance.new("Part")
-    fixedPlatform.Name = "MinhHub_WaterPlatform"
-    fixedPlatform.Size = WATER_PLATFORM_SIZE
-    fixedPlatform.Anchored = true
-    fixedPlatform.CanCollide = (walkOnWaterEnabled == true)
-    fixedPlatform.CanTouch = true
-    fixedPlatform.CanQuery = true
-    fixedPlatform.Transparency = 1
-    fixedPlatform.CastShadow = false
-    fixedPlatform.Material = Enum.Material.SmoothPlastic
-    fixedPlatform.CFrame = fixedCF
-    fixedPlatform.Parent = workspace
-
-    RunService.Stepped:Connect(function()
-        if not fixedPlatform.Parent then
-            fixedPlatform.Parent = workspace
-        end
-        fixedPlatform.Anchored = true
-        fixedPlatform.Size = WATER_PLATFORM_SIZE
-        fixedPlatform.CFrame = fixedCF
-        fixedPlatform.CanCollide = (walkOnWaterEnabled == true)
-        fixedPlatform.CanTouch = true
-        fixedPlatform.CanQuery = true
-    end)
-end
 
 local function AutoHaki()
     local character = LocalPlayer.Character
@@ -8988,6 +8976,17 @@ do
         -- Sea 2 material farming shares the same Cursed Ship entrance coordinator.
         if World2 then
             return Q.enterIfNeeded(hrp, targetPos)
+        end
+
+        if MatFarm.sea == 1 and targetPos.X < 50000 and hrp.Position.X > 50000 then
+            if Q.flyToUnderwaterExit(hrp) then return true end
+            local liveRoot = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+            if liveRoot and liveRoot.Position.X > 50000 then
+                Q.exitNearAt = nil
+                Q.exitTouchAt = nil
+                return true
+            end
+            return false
         end
 
         if MatFarm.sea == 1 and targetPos.X > 50000 and hrp.Position.X < 50000 then
@@ -12826,6 +12825,38 @@ _G.MHSpawn(function()
                     error("Chưa vào được Underwater City sau 75 giây. Hãy kiểm tra cổng xoáy Sea 1 và thử lại.")
                 end
                 setStatus("Đã vào Underwater City — đang bay tới NPC Fishman Karate (tốc độ 190)...")
+            end
+
+            -- Sea 1: exit Underwater City before traveling to a fighting-style NPC outside.
+            if World1 then
+                local transitDeadline = os.clock() + 75
+                while os.clock() < transitDeadline do
+                    if not (Q.MeleeShop.running and Q.MeleeShop.token == token and _G.BuyMeleeActive == true) then
+                        failureMessage = "Fighting-style purchase canceled."
+                        return
+                    end
+                    local root = getRoot()
+                    if not root then
+                        task.wait(0.25)
+                    elseif root.Position.X <= 50000 or npcPos.X >= 50000 then
+                        break
+                    else
+                        local transitOk, transitResult = pcall(function()
+                            return Q.flyToUnderwaterExit(root)
+                        end)
+                        local liveRoot = getRoot()
+                        if liveRoot and liveRoot.Position.X <= 50000 then break end
+                        if not transitOk or transitResult == false then
+                            Q.exitNearAt = nil
+                            Q.exitTouchAt = nil
+                        end
+                        task.wait(0.25)
+                    end
+                end
+                local root = getRoot()
+                if root and root.Position.X > 50000 and npcPos.X < 50000 then
+                    error("Could not exit Underwater City within 75 seconds; purchase canceled.")
+                end
             end
 
             -- Sea 2: nếu đang ở trong Thuyền Ma nhưng NPC mua võ nằm ngoài,
